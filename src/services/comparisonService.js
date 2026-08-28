@@ -1,58 +1,91 @@
 import { apiRequest } from './api'
 
+/* =========================================================
+COMPARAR CV CON OFERTA DE EMPLEO
+========================================================= */
 
 export async function compareCVWithJobOffer({
-  cvId,
-  jobTitle,
-  jobOfferText
+cvId,
+jobTitle,
+jobOfferText
 }) {
 
-  return apiRequest(
-    `/cv/${cvId}/compare`,
-    {
-      method: 'POST',
+if (!cvId) {
+throw new Error(
+'No se ha proporcionado un CV válido.'
+)
+}
 
-      body: JSON.stringify({
-        jobTitle,
-        jobOfferText
-      })
-    }
-  )
+return apiRequest(
+`/cv/${cvId}/compare`,
+{
+method: 'POST',
+
+```
+  body: JSON.stringify({
+    jobTitle,
+    jobOfferText
+  })
+}
+```
+
+)
 
 }
 
+/* =========================================================
+OBTENER COMPARACIONES
+========================================================= */
 
 export async function getComparisons() {
 
-  return apiRequest(
-    '/comparisons',
-    {
-      method: 'GET'
-    }
-  )
+return apiRequest(
+'/comparisons',
+{
+method: 'GET'
+}
+)
 
 }
 
+/* =========================================================
+OBTENER UNA COMPARACIÓN
+========================================================= */
 
 export async function getComparisonById(id) {
 
-  return apiRequest(
-    `/comparisons/${id}`,
-    {
-      method: 'GET'
-    }
-  )
+if (!id) {
+throw new Error(
+'No se ha proporcionado una comparación válida.'
+)
+}
+
+return apiRequest(
+`/comparisons/${id}`,
+{
+method: 'GET'
+}
+)
 
 }
 
+/* =========================================================
+ELIMINAR UNA COMPARACIÓN
+========================================================= */
 
 export async function deleteComparison(id) {
 
-  return apiRequest(
-    `/comparisons/${id}`,
-    {
-      method: 'DELETE'
-    }
-  )
+if (!id) {
+throw new Error(
+'No se ha proporcionado una comparación válida.'
+)
+}
+
+return apiRequest(
+`/comparisons/${id}`,
+{
+method: 'DELETE'
+}
+)
 
 }

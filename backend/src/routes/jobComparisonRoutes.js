@@ -334,37 +334,42 @@ if (existingComparison) {
         })
 
 
-      return res.status(201).json({
+return res.status(201).json({
 
-        status: 'success',
+  status: 'success',
 
-        message:
-          'Comparación realizada correctamente',
+  message:
+    'Comparación realizada correctamente',
 
-        comparison: {
+  comparison:
+    formatComparison({
 
-          id:
-            savedComparison.id,
+      id:
+        savedComparison.id,
 
-          cvAnalysisId:
-            cvId,
+      cv_analysis_id:
+        cvId,
 
-          jobTitle:
-            normalizedJobTitle,
+      job_title:
+        normalizedJobTitle,
 
-          compatibilityScore:
-            comparison.compatibilityScore,
+      job_offer_text:
+        normalizedJobOffer,
 
-          result:
-            comparison,
+      compatibility_score:
+        comparison.compatibilityScore,
 
-          createdAt:
-            savedComparison.created_at
+      result:
+        comparison,
 
-        },
-        cached: false
+      created_at:
+        savedComparison.created_at
 
-      })
+    }),
+
+  cached: false
+
+})
 
     } catch (error) {
 
