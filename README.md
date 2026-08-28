@@ -1,99 +1,225 @@
 # 🤖 AI CV Analyzer
 
-Aplicación web Full Stack que utiliza **Inteligencia Artificial** para analizar currículums en PDF y evaluar su compatibilidad con ofertas de empleo.
+**AI CV Analyzer** es una aplicación web Full Stack desarrollada como proyecto de portfolio después de finalizar mis estudios de **Desarrollo de Aplicaciones Web (DAW)**.
 
-El usuario puede subir su CV, obtener un análisis estructurado mediante IA, consultar su historial y comparar cualquiera de sus CV analizados con una oferta de empleo para conocer su nivel de compatibilidad y detectar posibles áreas de mejora.
+La aplicación utiliza **Inteligencia Artificial** para analizar currículums en formato PDF y ayudar al usuario a conocer mejor su perfil profesional. Además, permite comparar un CV analizado con una oferta de empleo para calcular su nivel de compatibilidad, detectar habilidades que coinciden, identificar carencias y obtener recomendaciones para mejorar la candidatura.
+
+El proyecto nace con una idea sencilla: **utilizar tecnologías que he aprendido durante mi formación para construir una aplicación completa y cercana a un caso de uso real.**
 
 ---
 
-## ✨ Funcionalidades
+## 🎯 ¿Qué hace la aplicación?
 
-### 🔐 Autenticación
+El usuario puede:
+
+* Crear una cuenta e iniciar sesión.
+* Subir su CV en formato PDF.
+* Analizar el contenido del CV mediante Inteligencia Artificial.
+* Obtener información estructurada sobre su perfil profesional.
+* Consultar una puntuación global del CV.
+* Guardar y consultar sus análisis anteriores.
+* Eliminar análisis del historial.
+* Comparar uno de sus CV con una oferta de empleo.
+* Obtener una puntuación de compatibilidad sobre 100.
+* Identificar habilidades coincidentes y faltantes.
+* Detectar fortalezas y brechas respecto a la oferta.
+* Obtener keywords relevantes.
+* Recibir recomendaciones para mejorar la candidatura.
+* Consultar posteriormente las comparaciones realizadas.
+
+Además, el proyecto incorpora mecanismos de **hashing y reutilización de resultados** para evitar procesamientos y llamadas innecesarias a la API de Inteligencia Artificial.
+
+---
+
+# ✨ Funcionalidades
+
+## 🔐 Autenticación
+
+El sistema cuenta con un sistema de autenticación basado en JWT.
+
+Incluye:
 
 * Registro de usuarios.
 * Inicio de sesión.
-* Autenticación mediante **JWT**.
 * Recuperación de sesión.
 * Consulta del usuario autenticado.
 * Cierre de sesión.
-* Protección de rutas privadas.
-* Rate limiting en autenticación.
+* Protección de endpoints privados.
+* Rate limiting en las operaciones de autenticación.
 
-### 📄 Análisis de CV
-
-* Subida de archivos PDF.
-* Validación del tipo de archivo.
-* Límite máximo de **5 MB**.
-* Extracción del texto del PDF.
-* Limpieza y normalización del contenido.
-* Análisis mediante Inteligencia Artificial.
-* Extracción estructurada de información del candidato.
-* Puntuación global del CV.
-* Evaluación del perfil y nivel profesional.
-* Guardado de los análisis en PostgreSQL.
-* Historial de CV analizados.
-* Consulta individual de análisis.
-* Eliminación de análisis.
-
-### ♻️ Detección de CV duplicados
-
-El contenido limpio del CV se utiliza para generar un hash.
-
-Si el usuario vuelve a subir exactamente el mismo CV:
-
-* No se vuelve a ejecutar el análisis mediante IA.
-* Se recupera el análisis almacenado.
-* Se reducen llamadas innecesarias a la API.
-* Se reducen costes de procesamiento.
-
-### 🎯 Comparación CV ↔ Oferta de empleo
-
-El usuario puede seleccionar uno de sus CV y pegar una oferta de empleo.
-
-La aplicación analiza:
-
-* Compatibilidad general.
-* Habilidades coincidentes.
-* Habilidades faltantes.
-* Fortalezas.
-* Brechas.
-* Keywords relevantes.
-* Recomendaciones.
-* Puntuación de compatibilidad sobre 100.
-
-Las comparaciones también se almacenan en PostgreSQL y pueden consultarse posteriormente desde el historial.
-
-### ♻️ Caché de comparaciones
-
-Las comparaciones utilizan una huella basada en:
-
-* CV analizado.
-* Título de la oferta.
-* Contenido de la oferta.
-
-Si la misma comparación ya existe para el usuario, se recupera el resultado almacenado sin volver a consumir la API de IA.
-
-### 🛡️ Seguridad
-
-El proyecto incorpora diferentes medidas de seguridad:
-
-* JWT para autenticación.
-* Helmet.
-* CORS configurado.
-* Rate limiting.
-* Validación de archivos.
-* Límite de tamaño de archivos.
-* Límites de tamaño para peticiones.
-* Protección de rutas privadas.
-* Verificación de propiedad de los recursos.
-* Variables sensibles mediante `.env`.
-* Eliminación de archivos PDF temporales después del procesamiento.
+Cada usuario únicamente puede acceder a sus propios CV, análisis y comparaciones.
 
 ---
 
-## 🧰 Tecnologías
+## 📄 Análisis de CV
 
-### Frontend
+El usuario puede subir un currículum en formato PDF.
+
+El proceso es:
+
+```text
+PDF
+ ↓
+Validación
+ ↓
+Extracción del texto
+ ↓
+Limpieza y normalización
+ ↓
+Generación de hash
+ ↓
+Comprobación de CV existente
+ ↓
+OpenAI API
+ ↓
+Análisis estructurado
+ ↓
+PostgreSQL
+ ↓
+Resultado
+```
+
+El análisis permite obtener información como:
+
+* Datos personales.
+* Perfil profesional.
+* Nivel profesional.
+* Experiencia.
+* Formación.
+* Habilidades.
+* Evaluación general.
+* Puntuación del CV.
+
+El resultado se guarda en PostgreSQL para poder consultarlo posteriormente.
+
+---
+
+## ♻️ Detección de CV duplicados
+
+Para evitar procesamientos innecesarios, la aplicación genera una huella basada en el contenido limpio del CV.
+
+```text
+CV
+ ↓
+Texto limpio
+ ↓
+Hash
+ ↓
+¿Existe?
+ ├── Sí → Recuperar análisis existente
+ └── No → Analizar mediante IA
+```
+
+Si el usuario vuelve a subir exactamente el mismo contenido, la aplicación puede recuperar el análisis existente en lugar de volver a consumir la API de IA.
+
+Esto permite:
+
+* Reducir llamadas a OpenAI.
+* Reducir costes.
+* Evitar procesamiento duplicado.
+* Mejorar el tiempo de respuesta.
+
+---
+
+# 🎯 Comparación entre CV y oferta de empleo
+
+Una de las funcionalidades principales de la aplicación es la posibilidad de comparar un CV previamente analizado con una oferta de empleo.
+
+El usuario introduce:
+
+* Título del puesto.
+* Texto de la oferta.
+
+La aplicación utiliza el análisis almacenado del CV y procesa la oferta mediante IA.
+
+El resultado incluye:
+
+### 📊 Compatibilidad
+
+Una puntuación de compatibilidad sobre 100.
+
+### ✅ Habilidades coincidentes
+
+Tecnologías, conocimientos o habilidades que aparecen tanto en el perfil como en la oferta.
+
+### ⚠️ Habilidades faltantes
+
+Requisitos de la oferta que no aparecen explícitamente en el CV analizado.
+
+### 💪 Fortalezas
+
+Aspectos del perfil que pueden favorecer al candidato.
+
+### 📌 Brechas
+
+Aspectos que pueden reducir la compatibilidad con el puesto.
+
+### 🔑 Keywords
+
+Palabras y términos relevantes detectados en la oferta.
+
+### 🚀 Recomendaciones
+
+Sugerencias para mejorar la candidatura en función de los requisitos del puesto.
+
+---
+
+## ♻️ Caché de comparaciones
+
+Las comparaciones también utilizan hashing para evitar repetir análisis idénticos.
+
+La huella se genera utilizando:
+
+```text
+CV + título de la oferta + contenido de la oferta
+```
+
+Después se comprueba si existe una comparación anterior para ese usuario.
+
+```text
+Comparación
+     ↓
+Hash
+     ↓
+¿Existe?
+ ├── Sí → Recuperar resultado
+ └── No → OpenAI API
+              ↓
+          Guardar resultado
+```
+
+De esta forma se reducen las llamadas innecesarias a la API.
+
+---
+
+# 🛡️ Seguridad
+
+Durante el desarrollo también se han tenido en cuenta diferentes aspectos de seguridad.
+
+El proyecto incorpora:
+
+* Autenticación mediante JWT.
+* Protección de endpoints privados.
+* Helmet.
+* Configuración de CORS.
+* Rate limiting.
+* Validación de entradas.
+* Validación del tipo de archivo.
+* Límite máximo de **5 MB por CV**.
+* Límites de tamaño para las peticiones.
+* Control de acceso mediante el usuario autenticado.
+* Comprobación de propiedad de los recursos.
+* Variables sensibles mediante `.env`.
+* Exclusión de `.env` mediante `.gitignore`.
+* Eliminación de archivos PDF temporales después de su procesamiento.
+
+Las credenciales y claves privadas no forman parte del repositorio.
+
+---
+
+# 🧰 Tecnologías utilizadas
+
+## Frontend
 
 * **Vue.js**
 * **Vite**
@@ -101,59 +227,41 @@ El proyecto incorpora diferentes medidas de seguridad:
 * HTML5
 * CSS3
 
-### Backend
+## Backend
 
 * **Node.js**
 * **Express.js**
-* REST API
+* API REST
 * JWT
 * Multer
 * Helmet
 * CORS
 * Express Rate Limit
 
-### Base de datos
+## Base de datos
 
 * **PostgreSQL**
 
-### Inteligencia Artificial
+## Inteligencia Artificial
 
 * **OpenAI API**
 * Modelo `gpt-5.6-luna`
 
-### Procesamiento de documentos
+## Procesamiento de documentos
 
 * PDF parsing
-* Extracción y limpieza de texto
+* Extracción de texto
+* Limpieza y normalización
 * Hashing de contenido
 
 ---
 
-## 🏗️ Arquitectura
+# 🏗️ Arquitectura
 
-El proyecto está dividido en dos aplicaciones principales:
+El proyecto está dividido en un frontend desarrollado con Vue y un backend desarrollado con Node.js y Express.
 
 ```text
 ai-cv-analyzer/
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── analysis/
-│   │   │   ├── auth/
-│   │   │   └── cv/
-│   │   │
-│   │   ├── services/
-│   │   │   ├── api.js
-│   │   │   ├── authService.js
-│   │   │   ├── cvService.js
-│   │   │   ├── analysisService.js
-│   │   │   └── comparisonService.js
-│   │   │
-│   │   ├── App.vue
-│   │   └── style.css
-│   │
-│   └── package.json
 │
 ├── backend/
 │   ├── middleware/
@@ -164,16 +272,38 @@ ai-cv-analyzer/
 │   ├── server.js
 │   └── package.json
 │
+├── public/
+│
+├── src/
+│   ├── components/
+│   │   ├── analysis/
+│   │   ├── auth/
+│   │   └── cv/
+│   │
+│   ├── services/
+│   │   ├── api.js
+│   │   ├── authService.js
+│   │   ├── cvService.js
+│   │   ├── analysisService.js
+│   │   └── comparisonService.js
+│   │
+│   ├── App.vue
+│   └── style.css
+│
 ├── .env.example
 ├── .gitignore
+├── index.html
+├── package.json
+├── package-lock.json
+├── vite.config.js
 └── README.md
 ```
 
-La comunicación sigue una arquitectura cliente-servidor:
+La comunicación entre las diferentes partes sigue una arquitectura cliente-servidor:
 
 ```text
 ┌──────────────────────┐
-│       Vue.js         │
+│      Vue.js          │
 │      Frontend        │
 └──────────┬───────────┘
            │
@@ -182,31 +312,34 @@ La comunicación sigue una arquitectura cliente-servidor:
 ┌──────────────────────┐
 │    Node + Express    │
 │       Backend        │
-└───────┬────────┬─────┘
-        │        │
-        │        │
-        ▼        ▼
-┌────────────┐ ┌──────────────┐
-│ PostgreSQL │ │  OpenAI API  │
-│            │ │              │
-│ Usuarios   │ │ CV Analysis  │
-│ CVs        │ │ Matching     │
-│ Comparaciones│             │
-└────────────┘ └──────────────┘
+└──────────┬───────────┘
+           │
+       ┌───┴───────────┐
+       │               │
+       ▼               ▼
+┌──────────────┐ ┌──────────────┐
+│  PostgreSQL  │ │  OpenAI API  │
+│              │ │              │
+│ Usuarios     │ │ CV Analysis  │
+│ CVs          │ │ Matching     │
+│ Comparaciones│ │              │
+└──────────────┘ └──────────────┘
 ```
 
 ---
 
-## 🔄 Flujo de análisis
+# 🔄 Flujo completo de la aplicación
+
+## Análisis de CV
 
 ```text
 Usuario
    │
    ▼
-Sube CV en PDF
+Sube CV
    │
    ▼
-Validación del archivo
+Validación del PDF
    │
    ▼
 Extracción del texto
@@ -217,131 +350,134 @@ Limpieza del contenido
    ▼
 Generación del hash
    │
-   ├── CV ya analizado ──────► Recuperar resultado
+   ├─────────────── CV existente
+   │                       │
+   │                       ▼
+   │                Recuperar resultado
    │
-   └── CV nuevo
-          │
-          ▼
-      OpenAI API
-          │
-          ▼
-      Análisis estructurado
-          │
-          ▼
-      PostgreSQL
-          │
-          ▼
-      Resultado al usuario
+   └─────────────── CV nuevo
+                           │
+                           ▼
+                      OpenAI API
+                           │
+                           ▼
+                   Análisis estructurado
+                           │
+                           ▼
+                       PostgreSQL
+                           │
+                           ▼
+                    Resultado al usuario
 ```
 
----
-
-## 🎯 Flujo de comparación
+## Comparación con oferta
 
 ```text
-CV guardado
+CV analizado
      │
      ▼
-Seleccionar oferta
+Seleccionar CV
      │
      ▼
-Título + texto de la oferta
+Introducir oferta
      │
      ▼
 Generar hash
      │
-     ├── Comparación existente
-     │          │
-     │          ▼
-     │      Recuperar resultado
+     ├──────────── Comparación existente
+     │                         │
+     │                         ▼
+     │                  Recuperar resultado
      │
-     └── Comparación nueva
-                │
-                ▼
-           OpenAI API
-                │
-                ▼
-       Análisis de compatibilidad
-                │
-                ▼
-            PostgreSQL
-                │
-                ▼
-             Resultado
+     └──────────── Comparación nueva
+                               │
+                               ▼
+                          OpenAI API
+                               │
+                               ▼
+                    Análisis de compatibilidad
+                               │
+                               ▼
+                           PostgreSQL
+                               │
+                               ▼
+                            Resultado
 ```
 
 ---
 
-## 🔌 API
+# 🔌 API REST
 
-### Autenticación
+## Autenticación
 
-```text
+```http
 POST /api/auth/register
 POST /api/auth/login
 GET  /api/auth/me
 ```
 
-### CV
+## CV
 
-```text
+```http
 POST   /api/cv
 GET    /api/cv
 GET    /api/cv/:id
 DELETE /api/cv/:id
 ```
 
-### Comparaciones
+## Comparaciones
 
-```text
+```http
 POST   /api/cv/:id/compare
 GET    /api/comparisons
 GET    /api/comparisons/:id
 DELETE /api/comparisons/:id
 ```
 
-### Health check
+## Health Check
 
-```text
+```http
 GET /api/health
 ```
 
 ---
 
-## ⚙️ Instalación
+# ⚙️ Instalación
 
-### Requisitos
+## Requisitos
 
-Antes de ejecutar el proyecto necesitas tener instalado:
+Para ejecutar el proyecto necesitas:
 
 * Node.js
 * npm
 * PostgreSQL
-* Una API key de OpenAI
+* Una API Key de OpenAI
+* Git
 
 ---
 
-### 1. Clonar el repositorio
+## 1. Clonar el repositorio
 
 ```bash
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/josecode2003/ai-cv-analyzer.git
 cd ai-cv-analyzer
 ```
 
 ---
 
-### 2. Instalar dependencias del frontend
+## 2. Instalar dependencias del frontend
+
+Desde la raíz del proyecto:
 
 ```bash
-cd frontend
 npm install
 ```
 
 ---
 
-### 3. Instalar dependencias del backend
+## 3. Instalar dependencias del backend
 
-Desde otra terminal:
+Abre otra terminal y ejecuta:
 
 ```bash
 cd backend
@@ -350,7 +486,9 @@ npm install
 
 ---
 
-## 🔑 Variables de entorno
+# 🔑 Variables de entorno
+
+El backend utiliza variables de entorno para almacenar la configuración y las credenciales sensibles.
 
 Dentro de `backend/` crea un archivo:
 
@@ -358,7 +496,9 @@ Dentro de `backend/` crea un archivo:
 .env
 ```
 
-con las variables necesarias:
+Puedes utilizar `.env.example` como referencia.
+
+Ejemplo:
 
 ```env
 OPENAI_API_KEY=tu_api_key
@@ -367,37 +507,39 @@ FRONTEND_ORIGIN=http://localhost:5173
 NODE_ENV=development
 ```
 
-> **Nunca subas el archivo `.env` a GitHub.**
+**Nunca debes subir tu archivo `.env` a GitHub.**
 
-Puedes utilizar `.env.example` como referencia.
+El proyecto incluye `.gitignore` para evitar que las credenciales se incorporen accidentalmente al repositorio.
 
 ---
 
-## ▶️ Ejecutar el proyecto
+# ▶️ Ejecutar el proyecto
 
-### Backend
+## Backend
 
-Desde `backend/`:
+Desde la carpeta `backend/`:
 
 ```bash
 npm start
 ```
 
-El servidor estará disponible en:
+El backend estará disponible normalmente en:
 
 ```text
 http://localhost:3000
 ```
 
-### Frontend
+---
 
-Desde `frontend/`:
+## Frontend
+
+Desde la raíz del proyecto:
 
 ```bash
 npm run dev
 ```
 
-La aplicación estará disponible normalmente en:
+Vite mostrará la dirección local de la aplicación, normalmente:
 
 ```text
 http://localhost:5173
@@ -405,127 +547,134 @@ http://localhost:5173
 
 ---
 
-## 🗄️ Base de datos
+# 🗄️ Base de datos
 
-La aplicación utiliza PostgreSQL para almacenar:
+La aplicación utiliza **PostgreSQL** para almacenar la información necesaria para el funcionamiento de la plataforma.
+
+Entre los datos almacenados se encuentran:
 
 * Usuarios.
 * Análisis de CV.
+* Resultados de análisis.
 * Comparaciones.
-* Resultados generados por IA.
+* Resultados de comparaciones.
 * Hashes utilizados para evitar procesamiento duplicado.
 
-La configuración de conexión se realiza mediante variables de entorno.
+El acceso a la base de datos se realiza desde el backend.
 
 ---
 
-## 🧠 Inteligencia Artificial
+# 🤖 Inteligencia Artificial
 
-La aplicación utiliza la API de OpenAI para realizar dos tareas principales:
+La aplicación utiliza la **OpenAI API** para realizar dos procesos principales.
 
-### Análisis de CV
+### Análisis de currículums
 
-El contenido extraído del CV se envía al modelo para obtener información estructurada sobre:
+El texto extraído del PDF se procesa para obtener una estructura de información relacionada con:
 
-* Datos personales.
-* Perfil.
+* Información personal.
+* Perfil profesional.
 * Experiencia.
 * Formación.
 * Habilidades.
+* Nivel profesional.
 * Evaluación general.
 * Puntuación.
 
 ### Comparación con ofertas
 
-El análisis almacenado del CV se compara con el contenido de una oferta de empleo para obtener:
+El análisis previamente almacenado del CV se utiliza junto con el texto de una oferta para generar:
 
-* Compatibilidad.
-* Coincidencias.
-* Carencias.
+* Puntuación de compatibilidad.
+* Habilidades coincidentes.
+* Habilidades faltantes.
 * Fortalezas.
 * Brechas.
 * Keywords.
 * Recomendaciones.
 
-Los resultados se almacenan para poder consultarlos posteriormente.
+Los resultados se almacenan en PostgreSQL para poder consultarlos posteriormente.
 
 ---
 
-## 💡 Optimización de costes
+# 💰 Optimización de costes
 
-Uno de los objetivos del proyecto es evitar llamadas innecesarias a la API de IA.
+Uno de los aspectos que quise trabajar durante el desarrollo fue evitar llamadas innecesarias a la API de Inteligencia Artificial.
 
-Para ello se implementan hashes de contenido.
+Para ello se implementaron mecanismos de hashing tanto para los CV como para las comparaciones.
 
 ### CV
 
 ```text
-CV → limpiar texto → SHA/hash → comprobar existencia
+CV
+ ↓
+Limpiar texto
+ ↓
+Generar hash
+ ↓
+Comprobar existencia
 ```
 
 ### Comparación
 
 ```text
-CV + título + oferta → hash → comprobar existencia
+CV + título + oferta
+ ↓
+Generar hash
+ ↓
+Comprobar existencia
 ```
 
-Cuando existe un resultado anterior, se devuelve directamente desde PostgreSQL.
+Cuando existe un resultado anterior, se recupera desde PostgreSQL en lugar de volver a procesarlo mediante IA.
 
 Esto permite:
 
-* Reducir llamadas a OpenAI.
+* Reducir consumo de API.
 * Reducir costes.
-* Mejorar el tiempo de respuesta.
 * Evitar procesamiento duplicado.
+* Mejorar el rendimiento.
 
 ---
 
-## 🛡️ Seguridad
+# 📱 Interfaz
 
-Entre las medidas implementadas se encuentran:
+La aplicación cuenta con diferentes vistas:
 
-* Autenticación JWT.
-* Protección de endpoints privados.
-* Helmet.
-* CORS.
-* Rate limiting.
-* Validación de entrada.
-* Validación de archivos PDF.
-* Límite de 5 MB por CV.
-* Límites de tamaño de request.
-* Control de acceso mediante `userId`.
-* Eliminación de archivos temporales.
-* Protección de credenciales mediante variables de entorno.
+* 🔐 Login.
+* 📝 Registro.
+* 🏠 Inicio.
+* 📄 Subida de CV.
+* 📊 Historial de análisis.
+* 🔎 Detalle de análisis.
+* 🎯 Formulario de comparación.
+* 📈 Resultado de compatibilidad.
+* 🗂️ Historial de comparaciones.
+
+La interfaz está diseñada para mantener un flujo sencillo:
+
+```text
+Login
+  ↓
+Inicio
+  ↓
+Subir CV
+  ↓
+Análisis
+  ↓
+Comparar con oferta
+  ↓
+Resultado
+  ↓
+Historial
+```
 
 ---
 
-## 📱 Interfaz
+# 📸 Capturas
 
-La aplicación dispone de diferentes vistas:
+Las capturas de la aplicación pueden incorporarse posteriormente en esta sección para mostrar visualmente las principales funcionalidades.
 
-* Login.
-* Registro.
-* Inicio.
-* Subida de CV.
-* Historial de análisis.
-* Detalle de análisis.
-* Formulario de comparación.
-* Resultado de comparación.
-* Historial de comparaciones.
-
----
-
-## 📸 Capturas
-
-Las capturas de pantalla de la aplicación pueden añadirse aquí para mostrar:
-
-1. Inicio de sesión.
-2. Dashboard.
-3. Análisis de CV.
-4. Historial de CV.
-5. Comparación con oferta.
-6. Resultado de compatibilidad.
-7. Historial de comparaciones.
+Ejemplos:
 
 ```text
 docs/
@@ -539,49 +688,74 @@ docs/
 
 ---
 
-## 🎓 Objetivo del proyecto
+# 🎓 Objetivo y aprendizaje
 
-AI CV Analyzer ha sido desarrollado como proyecto **Full Stack orientado a portfolio**, con el objetivo de poner en práctica diferentes tecnologías y conceptos utilizados en aplicaciones web modernas:
+Este proyecto ha sido desarrollado como parte de mi portfolio después de finalizar el **Grado Superior en Desarrollo de Aplicaciones Web**.
 
-* Desarrollo frontend con Vue.
-* Desarrollo de APIs REST con Node.js y Express.
+El objetivo principal no era únicamente crear una aplicación que funcionase, sino poner en práctica diferentes conocimientos adquiridos durante mi formación y combinarlos en un proyecto Full Stack completo.
+
+Durante el desarrollo he trabajado con:
+
+* Desarrollo de interfaces con Vue.js.
+* Componentización.
+* Comunicación mediante APIs REST.
+* Desarrollo backend con Node.js y Express.
 * Autenticación mediante JWT.
-* Persistencia de datos con PostgreSQL.
+* Gestión de usuarios.
+* PostgreSQL.
+* Persistencia de información.
 * Procesamiento de archivos PDF.
-* Integración con APIs de Inteligencia Artificial.
+* Integración con APIs externas.
+* Integración de Inteligencia Artificial.
+* Validación de datos.
+* Gestión de errores.
+* Seguridad básica de aplicaciones web.
+* Hashing y reutilización de resultados.
 * Arquitectura basada en servicios y repositorios.
-* Validación y manejo de errores.
-* Seguridad de aplicaciones web.
-* Optimización mediante caching y hashing.
+* Git y GitHub.
+
+Uno de los principales aprendizajes del proyecto ha sido entender cómo conectar todas estas piezas para construir una aplicación que no se limite a una interfaz, sino que tenga **frontend, backend, base de datos, autenticación, procesamiento de información e integración con servicios externos**.
 
 ---
 
-## 🔮 Posibles mejoras futuras
+# 🚀 Posibles mejoras futuras
 
-Algunas funcionalidades que podrían incorporarse en futuras versiones:
+La versión actual cubre el alcance planteado para el proyecto.
+
+Como posibles ampliaciones futuras podrían incorporarse:
 
 * Generación automática de CV optimizados.
 * Exportación de análisis a PDF.
 * Generación de cartas de presentación.
-* Sistema de recomendaciones personalizado.
-* Dashboard avanzado con estadísticas.
-* Comparación de múltiples ofertas.
+* Recomendaciones profesionales personalizadas.
+* Dashboard con estadísticas.
+* Comparación con múltiples ofertas simultáneamente.
 * Sistema de favoritos.
-* Despliegue en producción.
 * Tests automatizados adicionales.
+* Despliegue de la aplicación en producción.
 
-Estas funcionalidades quedan fuera del alcance actual de la versión V2.
+Estas funcionalidades quedan fuera del alcance de la versión actual.
 
 ---
 
-## 👨‍💻 Autor
+# 👨‍💻 Autor
 
 **Manu**
 
-Proyecto desarrollado como parte de mi portfolio de desarrollo web y Full Stack.
+Desarrollador Web / Full Stack Junior.
+
+Proyecto desarrollado como parte de mi portfolio tras finalizar el **Grado Superior en Desarrollo de Aplicaciones Web (DAW)**.
+
+GitHub:
+
+**https://github.com/josecode2003**
+
+Repositorio:
+
+**https://github.com/josecode2003/ai-cv-analyzer**
 
 ---
 
-## 📄 Licencia
+# 📄 Licencia
 
 Este proyecto se publica con fines educativos y de portfolio.
