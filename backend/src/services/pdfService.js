@@ -1,6 +1,12 @@
+// @ts-check
+
 const fs = require('fs')
 const { PDFParse } = require('pdf-parse')
 
+/**
+ * @param {string} filePath
+ * @returns {Promise<string>}
+ */
 async function extractTextFromPDF(filePath) {
   const pdfBuffer = fs.readFileSync(filePath)
 

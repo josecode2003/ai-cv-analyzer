@@ -1,4 +1,13 @@
-const OpenAI = require('openai')
+// @ts-check
+
+/*
+ * El SDK de openai publica sus tipos pensados para ESM
+ * (export default). Bajo require() en CommonJS el valor
+ * en tiempo de ejecución es idéntico, pero TypeScript no
+ * puede inferir la firma de constructor automáticamente.
+ */
+
+const OpenAI = /** @type {any} */ (require('openai'))
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -9,7 +18,6 @@ const cvAnalysisSchema = {
   additionalProperties: false,
 
   properties: {
-
     personalInfo: {
       type: 'object',
       additionalProperties: false,
@@ -23,14 +31,7 @@ const cvAnalysisSchema = {
         github: { type: 'string' }
       },
 
-      required: [
-        'name',
-        'email',
-        'phone',
-        'location',
-        'linkedin',
-        'github'
-      ]
+      required: ['name', 'email', 'phone', 'location', 'linkedin', 'github']
     },
 
     summary: {
@@ -52,13 +53,7 @@ const cvAnalysisSchema = {
           description: { type: 'string' }
         },
 
-        required: [
-          'company',
-          'position',
-          'startDate',
-          'endDate',
-          'description'
-        ]
+        required: ['company', 'position', 'startDate', 'endDate', 'description']
       }
     },
 
@@ -76,12 +71,7 @@ const cvAnalysisSchema = {
           endDate: { type: 'string' }
         },
 
-        required: [
-          'institution',
-          'degree',
-          'startDate',
-          'endDate'
-        ]
+        required: ['institution', 'degree', 'startDate', 'endDate']
       }
     },
 
@@ -90,7 +80,6 @@ const cvAnalysisSchema = {
       additionalProperties: false,
 
       properties: {
-
         technical: {
           type: 'array',
           items: {
@@ -117,19 +106,12 @@ const cvAnalysisSchema = {
               level: { type: 'string' }
             },
 
-            required: [
-              'language',
-              'level'
-            ]
+            required: ['language', 'level']
           }
         }
       },
 
-      required: [
-        'technical',
-        'soft',
-        'languages'
-      ]
+      required: ['technical', 'soft', 'languages']
     },
 
     projects: {
@@ -151,11 +133,7 @@ const cvAnalysisSchema = {
           }
         },
 
-        required: [
-          'name',
-          'description',
-          'technologies'
-        ]
+        required: ['name', 'description', 'technologies']
       }
     },
 
@@ -173,12 +151,7 @@ const cvAnalysisSchema = {
           description: { type: 'string' }
         },
 
-        required: [
-          'name',
-          'platform',
-          'date',
-          'description'
-        ]
+        required: ['name', 'platform', 'date', 'description']
       }
     },
 
@@ -187,7 +160,6 @@ const cvAnalysisSchema = {
       additionalProperties: false,
 
       properties: {
-
         strengths: {
           type: 'array',
           items: {
@@ -210,11 +182,7 @@ const cvAnalysisSchema = {
         }
       },
 
-      required: [
-        'strengths',
-        'weaknesses',
-        'recommendations'
-      ]
+      required: ['strengths', 'weaknesses', 'recommendations']
     },
 
     score: {
@@ -222,7 +190,6 @@ const cvAnalysisSchema = {
       additionalProperties: false,
 
       properties: {
-
         overall: {
           type: 'number',
           minimum: 0,
@@ -275,7 +242,6 @@ const cvAnalysisSchema = {
       additionalProperties: false,
 
       properties: {
-
         level: {
           type: 'string'
         },
@@ -290,19 +256,62 @@ const cvAnalysisSchema = {
 
         priority: {
           type: 'string',
-          enum: [
-            'low',
-            'medium',
-            'high'
-          ]
+          enum: ['low', 'medium', 'high']
+        }
+      },
+
+      required: ['level', 'profile', 'mainIssue', 'priority']
+    },
+
+    marketContext: {
+      type: 'object',
+      additionalProperties: false,
+
+      properties: {
+        profession: {
+          type: 'string'
+        },
+
+        demandLevel: {
+          type: 'string',
+          enum: ['alta', 'media', 'baja']
+        },
+
+        demandExplanation: {
+          type: 'string'
+        },
+
+        salaryRange: {
+          type: 'string'
+        },
+
+        keyCertifications: {
+          type: 'array',
+          items: {
+            type: 'string'
+          }
+        },
+
+        trends: {
+          type: 'string'
+        },
+
+        advice: {
+          type: 'array',
+          items: {
+            type: 'string'
+          }
         }
       },
 
       required: [
-        'level',
-        'profile',
-        'mainIssue',
-        'priority'
+        'profession',
+        'demandLevel',
+        'demandExplanation',
+        'salaryRange',
+        'keyCertifications',
+        'trends',
+        'advice'
       ]
     }
   },
@@ -317,32 +326,40 @@ const cvAnalysisSchema = {
     'certifications',
     'analysis',
     'score',
-    'overallAssessment'
+    'overallAssessment',
+    'marketContext'
   ]
 }
 
-
+/**
+ * Analiza un CV en texto plano mediante la API de OpenAI
+ * y devuelve el JSON estructurado que valida `cvAnalysisSchema`.
+ *
+ * @param {string} cvText
+ * @returns {Promise<Record<string, unknown>>}
+ */
 async function analyzeCV(cvText) {
-
   if (!cvText || typeof cvText !== 'string') {
     throw new Error('CV text is required')
   }
 
   const response = await client.responses.create({
-
-    model: 'gpt-5.6-luna',
+    model: 'gpt-4.1',
 
     input: [
-
       {
         role: 'system',
 
         content: `
-You are an expert CV and recruitment analyst.
+You are an expert CV and recruitment analyst who works with candidates from EVERY profession and trade, not only office or technology roles: developers, but equally waiters, plumbers, electricians, bricklayers, cooks, drivers, cleaners, hairdressers, nurses, teachers, warehouse workers, farmers, and any other occupation that exists.
 
 Your task is to analyze the CV provided by the user and return a precise, structured and objective assessment.
 
-The purpose of the analysis is to help the candidate understand how strong their CV is and what concrete improvements could make it more competitive.
+The purpose of the analysis is to help the candidate understand how strong their CV is and what concrete improvements could make it more competitive, WHATEVER their profession is.
+
+CRITICAL: Never assume the candidate is a developer or office worker. Read the CV first, identify the actual profession or trade from its content, and adapt every part of your analysis (skills, "projects", scoring, recommendations, market context) to that specific profession. A CV for a plumber, a waiter or a bricklayer is just as valid and complete as a CV for a software developer, and must never be penalized for lacking things that only make sense in an office/tech context (e.g. a GitHub profile, a portfolio of coding projects, or listed "technologies").
+
+LANGUAGE: Write every text value in the response in Spanish (Spain), regardless of the language the original CV is written in. This tool is aimed at the Spanish job market.
 
 IMPORTANT DATA INTEGRITY RULES
 
@@ -423,18 +440,18 @@ SKILLS
 
 26. For languages, only include a language level when it is explicitly stated.
 
-PROJECTS
+PROJECTS / NOTABLE WORK
 
-27. Projects are one of the most important sections for a junior developer.
+27. "Projects" is a broad category: personal, academic or professional projects (for developers and similar profiles), but equally notable jobs, works, services or achievements for any other trade or profession — e.g. a kitchen a cook designed a menu for, a renovation a plumber or bricklayer completed, an event a waiter or chef helped run, a vehicle fleet a driver maintained, a class a teacher developed. Use whatever concrete, describable body of work fits the candidate's actual profession.
 
-28. However, do not invent projects.
+28. However, do not invent projects or notable work that is not described in the CV.
 
-29. If no projects are present, return an empty array.
+29. If nothing of this kind is present, return an empty array.
 
-30. A project should contain:
+30. A project/notable-work entry should contain:
    - name
    - description
-   - technologies
+   - technologies (tools, materials, machinery, software or techniques used — leave as an empty array if the profession genuinely has none worth listing)
 
 31. Only populate those fields when supported by the CV.
 
@@ -471,7 +488,7 @@ SCORE
    Experience
    Skills
    Education
-   Projects
+   Projects (notable work, in whatever form fits the profession)
    Presentation
 
 44. Each category must receive a score between 0 and 100.
@@ -491,7 +508,7 @@ Do not excessively penalize junior candidates simply because they have little pr
 46. SKILLS SCORE:
 
 Evaluate:
-- relevance of technologies
+- relevance of the technical/trade skills to the candidate's actual profession
 - breadth of technical skills
 - presence of soft skills
 - clarity
@@ -509,19 +526,21 @@ Evaluate:
 - consistency of dates
 - relevance to the target professional profile
 
-48. PROJECTS SCORE:
+For trades where formal education is not the primary path (e.g. many manual trades learned through apprenticeship or on-the-job experience), do not penalize the candidate for lacking a university-style education if their training/qualifications are appropriate for that trade.
+
+48. PROJECTS SCORE (notable work, in whatever form fits the candidate's profession):
 
 Evaluate:
-- presence of projects
-- technical detail
-- relevance
+- presence of projects or other describable notable work
+- level of detail
+- relevance to the candidate's profession
 - description quality
-- technologies
-- repository or demonstration links when present
+- tools/technologies/materials used
+- repository, portfolio or demonstration links when present (only when relevant to the profession; their absence must never lower the score for professions where this is not a normal practice)
 
-If there are no projects, the score should be low.
+If the array is empty AND the candidate's experience section already contains no describable notable work either, score low (but not necessarily exactly 0 — judge how much this genuinely limits the CV for that specific profession).
 
-Do not automatically assign exactly 0 unless the absence of projects genuinely justifies it.
+If there is at least one project/notable-work entry, score it based on the criteria above.
 
 49. PRESENTATION SCORE:
 
@@ -575,27 +594,37 @@ Examples:
 - Senior
 - Student
 - Entry-level
+- Aprendiz
+- Oficial de 2ª
+- Oficial de 1ª
+- Encargado/a
 
-Do not assign a senior level without sufficient professional experience.
+Use whichever set of terms is standard for the candidate's actual trade or profession; the list above is illustrative, not exhaustive. Do not assign a senior/top level without sufficient professional experience.
 
-52. Determine the most appropriate professional profile based on the CV.
+52. Determine the most appropriate professional profile based on the CV. This must match the candidate's real profession, whatever it is.
 
-Examples:
+Examples (illustrative only — use the term that actually fits the CV):
 - Desarrollador Web Junior
-- Desarrollador Full Stack Junior
 - Técnico de Sistemas
-- Desarrollador Backend Junior
+- Camarero/a
+- Fontanero/a
+- Electricista
+- Albañil
+- Cocinero/a
+- Auxiliar de enfermería
+- Conductor/a de transporte de mercancías
 
 Do not invent a profile unrelated to the CV.
 
 53. Identify the SINGLE most important issue limiting the CV's competitiveness.
 
-54. The main issue must be concrete and useful.
+54. The main issue must be concrete and useful, and phrased in terms relevant to the candidate's actual profession.
 
 Examples:
-- Falta de proyectos demostrables
-- Experiencia profesional poco relacionada con desarrollo
-- Falta de información sobre logros
+- Falta de proyectos o trabajos demostrables
+- Experiencia profesional poco relacionada con el puesto objetivo
+- Falta de información sobre logros o resultados concretos
+- Falta de certificados u homologaciones habituales en el sector
 - Falta de idiomas
 - Presentación poco clara
 
@@ -611,9 +640,29 @@ IMPORTANT:
 
 The candidate's career stage must be taken into account.
 
-A junior candidate should not receive an artificially low score simply because they do not have years of professional experience.
+A junior/entry-level candidate should not receive an artificially low score simply because they do not have years of professional experience.
 
 At the same time, the CV should not receive a high score if important evidence is genuinely missing.
+
+MARKET CONTEXT (SPAIN)
+
+56. This section is DIFFERENT from the rest of the analysis: it is not extracted from the CV, it is your own informed assessment of the current Spanish (España) labor market for the candidate's specific profession. The strict "never invent" rules above apply to CV content, not to this section — here you are expected to provide your best general knowledge.
+
+57. Be explicit that this is an approximate, general estimate, not official statistics — phrase salaryRange and demandExplanation accordingly (e.g. "aproximadamente", "orientativo").
+
+58. profession: the specific profession/trade detected from the CV (e.g. "Fontanero", "Camarero de sala", "Desarrollador Backend Junior", "Albañil").
+
+59. demandLevel: "alta", "media" or "baja" — your best assessment of current demand for this profession in Spain.
+
+60. demandExplanation: 1-2 sentences justifying that demand level (e.g. shortage of skilled tradespeople in a region/sector, market saturation, seasonal demand, growth of a sector).
+
+61. salaryRange: an approximate monthly gross salary range in euros typical for this profession and experience level in Spain (e.g. "aprox. 1.300-1.700 €/mes brutos para un oficial con experiencia inicial"). If truly impossible to estimate, state that clearly instead of guessing wildly.
+
+62. keyCertifications: certificates, "carnés profesionales", professional qualifications or homologations that are valued or required for this profession in Spain (e.g. certificado de manipulador de alimentos for hostelería, carnet de instalador autorizado for electricistas, PRL 20h/60h, certificado de profesionalidad). Empty array if genuinely not applicable.
+
+63. trends: 1-2 sentences on relevant current trends for this profession/sector in Spain (e.g. digitalización, escasez de mano de obra cualificada, crecimiento o contracción del sector, estacionalidad).
+
+64. advice: 2-4 concrete, actionable pieces of advice to improve this candidate's employability specifically in the Spanish market for their profession (e.g. specific certifications worth getting, platforms or gremios/colegios profesionales to register with, in-demand specializations). Never recommend inventing experience or credentials the candidate does not have.
 
 Return ONLY the JSON structure requested by the schema.
         `
@@ -632,25 +681,20 @@ CV:
 ${cvText}
         `
       }
-
     ],
 
     text: {
-
       format: {
         type: 'json_schema',
         name: 'cv_analysis',
         strict: true,
         schema: cvAnalysisSchema
       }
-
     }
-
   })
 
   return JSON.parse(response.output_text)
 }
-
 
 module.exports = {
   analyzeCV

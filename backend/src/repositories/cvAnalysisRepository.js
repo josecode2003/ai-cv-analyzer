@@ -1,13 +1,47 @@
+// @ts-check
+
 const pool = require('../config/database')
 
-async function findAnalysisByContentHash(
-  userId,
-  contentHash
-) {
+/**
+ * @typedef {object} CvAnalysisRow
+ * @property {number} id
+ * @property {string} original_filename
+ * @property {string} filename
+ * @property {number} file_size
+ * @property {string} mime_type
+ * @property {string | null} candidate_name
+ * @property {string | null} candidate_email
+ * @property {number | null} score
+ * @property {string | null} profile
+ * @property {string | null} level
+ * @property {Record<string, unknown>} [analysis]
+ * @property {Date} created_at
+ */
 
-  const result =
-    await pool.query(
-      `
+/**
+ * @typedef {object} CreateAnalysisInput
+ * @property {number} sessionId
+ * @property {string} originalFilename
+ * @property {string} filename
+ * @property {number} fileSize
+ * @property {string} mimeType
+ * @property {string | null} candidateName
+ * @property {string | null} candidateEmail
+ * @property {number | null} score
+ * @property {string | null} profile
+ * @property {string | null} level
+ * @property {Record<string, unknown>} analysis
+ * @property {string} contentHash
+ */
+
+/**
+ * @param {number} sessionId
+ * @param {string} contentHash
+ * @returns {Promise<CvAnalysisRow | null>}
+ */
+async function findAnalysisByContentHash(sessionId, contentHash) {
+  const result = await pool.query(
+    `
         SELECT
           id,
           original_filename,
@@ -22,44 +56,41 @@ async function findAnalysisByContentHash(
           analysis,
           created_at
         FROM cv_analyses
-        WHERE user_id = $1
+        WHERE session_id = $1
           AND content_hash = $2
         ORDER BY created_at ASC
         LIMIT 1
       `,
-      [
-        userId,
-        contentHash
-      ]
-    )
+    [sessionId, contentHash]
+  )
 
   return result.rows[0] || null
 }
 
-
-
-    async function createAnalysis(data) {
-
-    const {
-      userId,
-      originalFilename,
-      filename,
-      fileSize,
-      mimeType,
-      candidateName,
-      candidateEmail,
-      score,
-      profile,
-      level,
-      analysis,
-      contentHash
-    } = data
-
+/**
+ * @param {CreateAnalysisInput} data
+ * @returns {Promise<Pick<CvAnalysisRow, 'id' | 'created_at'>>}
+ */
+async function createAnalysis(data) {
+  const {
+    sessionId,
+    originalFilename,
+    filename,
+    fileSize,
+    mimeType,
+    candidateName,
+    candidateEmail,
+    score,
+    profile,
+    level,
+    analysis,
+    contentHash
+  } = data
 
   const result = await pool.query(
     `
       INSERT INTO cv_analyses (
-        user_id,
+        session_id,
         original_filename,
         filename,
         file_size,
@@ -89,7 +120,7 @@ async function findAnalysisByContentHash(
       RETURNING id, created_at
     `,
     [
-      userId,
+      sessionId,
       originalFilename,
       filename,
       fileSize,
@@ -107,12 +138,13 @@ async function findAnalysisByContentHash(
   return result.rows[0]
 }
 
-
-async function getAllAnalyses(userId) {
-
-  const result =
-    await pool.query(
-      `
+/**
+ * @param {number} sessionId
+ * @returns {Promise<Omit<CvAnalysisRow, 'analysis'>[]>}
+ */
+async function getAllAnalyses(sessionId) {
+  const result = await pool.query(
+    `
         SELECT
           id,
           original_filename,
@@ -126,25 +158,23 @@ async function getAllAnalyses(userId) {
           level,
           created_at
         FROM cv_analyses
-        WHERE user_id = $1
+        WHERE session_id = $1
         ORDER BY created_at DESC
       `,
-      [userId]
-    )
-
+    [sessionId]
+  )
 
   return result.rows
 }
 
-
-async function getAnalysisById(
-  id,
-  userId
-) {
-
-  const result =
-    await pool.query(
-      `
+/**
+ * @param {number} id
+ * @param {number} sessionId
+ * @returns {Promise<CvAnalysisRow | null>}
+ */
+async function getAnalysisById(id, sessionId) {
+  const result = await pool.query(
+    `
         SELECT
           id,
           original_filename,
@@ -160,42 +190,32 @@ async function getAnalysisById(
           created_at
         FROM cv_analyses
         WHERE id = $1
-          AND user_id = $2
+          AND session_id = $2
       `,
-      [
-        id,
-        userId
-      ]
-    )
-
+    [id, sessionId]
+  )
 
   return result.rows[0] || null
 }
 
-
-async function deleteAnalysis(
-  id,
-  userId
-) {
-
-  const result =
-    await pool.query(
-      `
+/**
+ * @param {number} id
+ * @param {number} sessionId
+ * @returns {Promise<Pick<CvAnalysisRow, 'id'> | null>}
+ */
+async function deleteAnalysis(id, sessionId) {
+  const result = await pool.query(
+    `
         DELETE FROM cv_analyses
         WHERE id = $1
-          AND user_id = $2
+          AND session_id = $2
         RETURNING id
       `,
-      [
-        id,
-        userId
-      ]
-    )
-
+    [id, sessionId]
+  )
 
   return result.rows[0] || null
 }
-
 
 module.exports = {
   createAnalysis,

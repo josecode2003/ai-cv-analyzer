@@ -5,26 +5,18 @@ SUBIR Y ANALIZAR CV
 ========================================================= */
 
 export async function uploadCV(file) {
+  const formData = new FormData()
 
-const formData =
-new FormData()
-
-/*
+  /*
 
 * El backend espera el archivo
 * en el campo "cv".
   */
 
-formData.append(
-'cv',
-file
-)
+  formData.append('cv', file)
 
-return apiRequest(
-'/cv',
-{
-method: 'POST',
-body: formData
-}
-)
+  return apiRequest('/cv', {
+    method: 'POST',
+    body: formData
+  })
 }

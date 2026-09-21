@@ -1,8 +1,31 @@
+// @ts-check
+
 const pool = require('../config/database')
 
+/**
+ * @typedef {object} JobComparisonRow
+ * @property {number} id
+ * @property {number} cv_analysis_id
+ * @property {string | null} job_title
+ * @property {string} [job_offer_text]
+ * @property {number | null} compatibility_score
+ * @property {Record<string, unknown>} [result]
+ * @property {Date} created_at
+ */
 
+/**
+ * @param {object} params
+ * @param {number} params.sessionId
+ * @param {number} params.cvAnalysisId
+ * @param {string | null} params.jobTitle
+ * @param {string} params.jobOfferText
+ * @param {number} params.compatibilityScore
+ * @param {Record<string, unknown>} params.result
+ * @param {string} params.comparisonHash
+ * @returns {Promise<Pick<JobComparisonRow, 'id' | 'created_at'>>}
+ */
 async function createComparison({
-  userId,
+  sessionId,
   cvAnalysisId,
   jobTitle,
   jobOfferText,
@@ -10,11 +33,10 @@ async function createComparison({
   result,
   comparisonHash
 }) {
-
   const response = await pool.query(
     `
       INSERT INTO job_comparisons (
-        user_id,
+        session_id,
         cv_analysis_id,
         job_title,
         job_offer_text,
@@ -36,7 +58,7 @@ async function createComparison({
         created_at
     `,
     [
-      userId,
+      sessionId,
       cvAnalysisId,
       jobTitle,
       jobOfferText,
@@ -49,14 +71,14 @@ async function createComparison({
   return response.rows[0]
 }
 
-async function findComparisonByHash(
-  userId,
-  comparisonHash
-) {
-
-  const response =
-    await pool.query(
-      `
+/**
+ * @param {number} sessionId
+ * @param {string} comparisonHash
+ * @returns {Promise<JobComparisonRow | null>}
+ */
+async function findComparisonByHash(sessionId, comparisonHash) {
+  const response = await pool.query(
+    `
         SELECT
           id,
           cv_analysis_id,
@@ -66,21 +88,21 @@ async function findComparisonByHash(
           result,
           created_at
         FROM job_comparisons
-        WHERE user_id = $1
+        WHERE session_id = $1
           AND comparison_hash = $2
         LIMIT 1
       `,
-      [
-        userId,
-        comparisonHash
-      ]
-    )
+    [sessionId, comparisonHash]
+  )
 
   return response.rows[0] || null
 }
 
-async function getComparisonsByUser(userId) {
-
+/**
+ * @param {number} sessionId
+ * @returns {Promise<Omit<JobComparisonRow, 'job_offer_text' | 'result'>[]>}
+ */
+async function getComparisonsByUser(sessionId) {
   const response = await pool.query(
     `
       SELECT
@@ -90,21 +112,21 @@ async function getComparisonsByUser(userId) {
         compatibility_score,
         created_at
       FROM job_comparisons
-      WHERE user_id = $1
+      WHERE session_id = $1
       ORDER BY created_at DESC
     `,
-    [userId]
+    [sessionId]
   )
 
   return response.rows
 }
 
-
-async function getComparisonById(
-  id,
-  userId
-) {
-
+/**
+ * @param {number} id
+ * @param {number} sessionId
+ * @returns {Promise<JobComparisonRow | null>}
+ */
+async function getComparisonById(id, sessionId) {
   const response = await pool.query(
     `
       SELECT
@@ -117,39 +139,32 @@ async function getComparisonById(
         created_at
       FROM job_comparisons
       WHERE id = $1
-        AND user_id = $2
+        AND session_id = $2
     `,
-    [
-      id,
-      userId
-    ]
+    [id, sessionId]
   )
 
   return response.rows[0] || null
 }
 
-
-async function deleteComparison(
-  id,
-  userId
-) {
-
+/**
+ * @param {number} id
+ * @param {number} sessionId
+ * @returns {Promise<Pick<JobComparisonRow, 'id'> | null>}
+ */
+async function deleteComparison(id, sessionId) {
   const response = await pool.query(
     `
       DELETE FROM job_comparisons
       WHERE id = $1
-        AND user_id = $2
+        AND session_id = $2
       RETURNING id
     `,
-    [
-      id,
-      userId
-    ]
+    [id, sessionId]
   )
 
   return response.rows[0] || null
 }
-
 
 module.exports = {
   createComparison,

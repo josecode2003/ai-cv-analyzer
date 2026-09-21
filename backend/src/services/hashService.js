@@ -1,52 +1,55 @@
+// @ts-check
+
 const crypto = require('crypto')
 
-
+/**
+ * @param {string} value
+ * @returns {string} Hash SHA-256 en hexadecimal.
+ */
 function createHash(value) {
-
-  return crypto
-    .createHash('sha256')
-    .update(value, 'utf8')
-    .digest('hex')
-
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
-
+/**
+ * Normaliza saltos de línea y espacios para que dos textos
+ * equivalentes produzcan siempre el mismo hash.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
 function normalizeText(text) {
-
   return text
     .trim()
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
-
 }
 
-
+/**
+ * Huella de contenido de un CV, usada para detectar
+ * si ya fue analizado anteriormente por el mismo usuario.
+ *
+ * @param {string} cvText
+ * @returns {string}
+ */
 function createCVHash(cvText) {
-
-  return createHash(
-    normalizeText(cvText)
-  )
-
+  return createHash(normalizeText(cvText))
 }
 
+/**
+ * Huella de una comparación CV + oferta, usada para
+ * detectar si ya fue realizada anteriormente.
+ *
+ * @param {Record<string, unknown>} cvAnalysis
+ * @param {string} jobTitle
+ * @param {string} jobOfferText
+ * @returns {string}
+ */
+function createComparisonHash(cvAnalysis, jobTitle, jobOfferText) {
+  const normalizedTitle = (jobTitle || '').trim().toLowerCase()
 
-function createComparisonHash(
-  cvAnalysis,
-  jobTitle,
-  jobOfferText
-) {
-
-  const normalizedTitle =
-    (jobTitle || '')
-      .trim()
-      .toLowerCase()
-
-  const normalizedOffer =
-    normalizeText(
-      jobOfferText
-    )
+  const normalizedOffer = normalizeText(jobOfferText)
 
   /*
    * JSON.stringify produce una representación
@@ -58,17 +61,10 @@ function createComparisonHash(
    * por lo que al recuperarlo mantenemos ese orden.
    */
 
-  const normalizedCV =
-    JSON.stringify(
-      cvAnalysis
-    )
+  const normalizedCV = JSON.stringify(cvAnalysis)
 
-  return createHash(
-    `${normalizedCV}|${normalizedTitle}|${normalizedOffer}`
-  )
-
+  return createHash(`${normalizedCV}|${normalizedTitle}|${normalizedOffer}`)
 }
-
 
 module.exports = {
   createHash,

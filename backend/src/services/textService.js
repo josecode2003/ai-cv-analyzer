@@ -1,3 +1,9 @@
+// @ts-check
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
 function cleanCVText(text) {
   if (!text || typeof text !== 'string') {
     return ''
