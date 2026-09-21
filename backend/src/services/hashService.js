@@ -66,9 +66,44 @@ function createComparisonHash(cvAnalysis, jobTitle, jobOfferText) {
   return createHash(`${normalizedCV}|${normalizedTitle}|${normalizedOffer}`)
 }
 
+/**
+ * Firma determinista de un perfil profesional, usada como
+ * clave de caché del Market Analysis.
+ *
+ * Dos CVs distintos (incluso de sesiones distintas) que
+ * describan el mismo perfil (ocupación + sector + senioridad
+ * + ubicación) comparten la misma firma, por lo que el
+ * análisis de mercado se reutiliza entre ellos: los datos del
+ * mercado no dependen de quién subió el CV, solo del perfil
+ * detectado.
+ *
+ * @param {{
+ *   occupation?: string,
+ *   sector?: string,
+ *   subsector?: string,
+ *   seniority?: string,
+ *   region?: string
+ * }} profile
+ * @returns {string}
+ */
+function createProfileSignature(profile) {
+  const normalize = value => (value || '').trim().toLowerCase()
+
+  const parts = [
+    normalize(profile.occupation),
+    normalize(profile.sector),
+    normalize(profile.subsector),
+    normalize(profile.seniority),
+    normalize(profile.region)
+  ]
+
+  return createHash(parts.join('|'))
+}
+
 module.exports = {
   createHash,
   normalizeText,
   createCVHash,
-  createComparisonHash
+  createComparisonHash,
+  createProfileSignature
 }

@@ -1279,6 +1279,174 @@ button:disabled {
   color: #b91c1c;
 }
 
+.demand-sin_datos_suficientes {
+  background: #f3f4f6;
+
+  color: #6b7280;
+}
+
+/* =========================================================
+   MARKET ANALYSIS
+   ========================================================= */
+
+.market-loading {
+  min-height: 160px;
+}
+
+.market-unavailable {
+  padding: 16px;
+
+  border-radius: 10px;
+
+  background: #f9fafb;
+}
+
+.retry-link {
+  margin-left: 8px;
+
+  border: none;
+  background: none;
+
+  color: #b91c1c;
+  font-weight: 700;
+  text-decoration: underline;
+
+  cursor: pointer;
+}
+
+.data-sufficiency-note {
+  margin: 0 0 18px;
+
+  padding: 10px 14px;
+
+  border-radius: 8px;
+
+  background: #eff4ff;
+
+  color: #3155a6;
+
+  font-size: 13px;
+}
+
+.market-block {
+  margin-bottom: 20px;
+}
+
+.market-block h4 {
+  margin: 0 0 6px;
+
+  color: #111827;
+
+  font-size: 14px;
+}
+
+.market-block p {
+  margin: 0 0 6px;
+
+  color: #4b5563;
+
+  line-height: 1.6;
+}
+
+.market-item {
+  margin-bottom: 14px;
+
+  padding-bottom: 14px;
+
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.market-item:last-child {
+  border-bottom: none;
+}
+
+.market-evidence {
+  display: flex;
+  flex-wrap: wrap;
+
+  gap: 10px;
+
+  align-items: center;
+
+  margin-bottom: 16px;
+
+  font-size: 12px;
+}
+
+.confidence-tag {
+  padding: 3px 10px;
+
+  border-radius: 20px;
+
+  font-weight: 700;
+}
+
+.confidence-official .confidence-tag {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.confidence-source .confidence-tag {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.confidence-estimate .confidence-tag {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.confidence-none .confidence-tag {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.evidence-source,
+.evidence-date {
+  color: #6b7280;
+}
+
+.evidence-source a {
+  color: #3155a6;
+}
+
+.market-sources {
+  margin-top: 20px;
+}
+
+.market-sources h4 {
+  margin: 0 0 8px;
+
+  font-size: 14px;
+}
+
+.market-sources ul {
+  margin: 0;
+
+  padding-left: 20px;
+}
+
+.market-sources li {
+  margin-bottom: 8px;
+
+  color: #4b5563;
+
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.market-sources a {
+  color: #3155a6;
+}
+
+.market-generated-at {
+  margin-top: 16px;
+
+  color: #9ca3af;
+
+  font-size: 12px;
+}
+
 .main-issue-card {
   margin-bottom: 20px;
 

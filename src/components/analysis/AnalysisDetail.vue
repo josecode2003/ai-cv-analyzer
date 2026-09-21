@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 
+import MarketAnalysis from './MarketAnalysis.vue'
 import {
   getScoreClass,
   getPriorityClass,
@@ -10,6 +11,10 @@ import {
 const props = defineProps({
   analysis: {
     type: Object,
+    required: true
+  },
+  cvId: {
+    type: [String, Number],
     required: true
   }
 })
@@ -432,85 +437,68 @@ function analyzeAnother() {
     </div>
 
     <!-- =====================================================
-     MERCADO LABORAL EN ESPAÑA
+     PERFIL PROFESIONAL DETECTADO
      ===================================================== -->
 
-    <div v-if="analysis.marketContext" class="analysis-section">
-      <h3>🇪🇸 Mercado laboral en España</h3>
-
-      <p class="market-disclaimer">
-        Estimación orientativa según conocimiento general del sector, no
-        estadísticas oficiales en tiempo real.
-      </p>
-
-      <div class="market-header">
-        <div>
-          <span>Profesión detectada</span>
-
-          <strong>
-            {{ analysis.marketContext.profession || 'No determinada' }}
-          </strong>
-        </div>
-
-        <div
-          class="demand-badge"
-          :class="`demand-${analysis.marketContext.demandLevel}`"
-        >
-          Demanda {{ analysis.marketContext.demandLevel || 'no determinada' }}
-        </div>
-      </div>
-
-      <p v-if="analysis.marketContext.demandExplanation" class="empty-text">
-        {{ analysis.marketContext.demandExplanation }}
-      </p>
+    <div
+      v-if="analysis.professionalProfile?.occupation"
+      class="analysis-section"
+    >
+      <h3>🧭 Perfil profesional detectado</h3>
 
       <div class="info-grid">
-        <div v-if="analysis.marketContext.salaryRange">
-          <span>Salario orientativo</span>
-
-          <strong>{{ analysis.marketContext.salaryRange }}</strong>
+        <div>
+          <span>Ocupación</span>
+          <strong>{{ analysis.professionalProfile.occupation }}</strong>
         </div>
 
-        <div v-if="analysis.marketContext.trends">
-          <span>Tendencias del sector</span>
+        <div v-if="analysis.professionalProfile.sector">
+          <span>Sector</span>
+          <strong>{{ analysis.professionalProfile.sector }}</strong>
+        </div>
 
-          <strong>{{ analysis.marketContext.trends }}</strong>
+        <div v-if="analysis.professionalProfile.subsector">
+          <span>Subsector</span>
+          <strong>{{ analysis.professionalProfile.subsector }}</strong>
+        </div>
+
+        <div v-if="analysis.professionalProfile.seniority">
+          <span>Senioridad</span>
+          <strong>{{ analysis.professionalProfile.seniority }}</strong>
+        </div>
+
+        <div v-if="analysis.professionalProfile.location">
+          <span>Ubicación</span>
+          <strong>{{ analysis.professionalProfile.location }}</strong>
         </div>
       </div>
 
       <div
-        v-if="analysis.marketContext.keyCertifications?.length"
+        v-if="analysis.professionalProfile.relatedOccupations?.length"
         class="skill-group"
       >
-        <h4>Certificaciones valoradas en España</h4>
+        <h4>Ocupaciones relacionadas</h4>
 
         <div class="tag-list">
           <span
-            v-for="certification in analysis.marketContext.keyCertifications"
-            :key="certification"
+            v-for="related in analysis.professionalProfile.relatedOccupations"
+            :key="related"
             class="skill-tag"
           >
-            {{ certification }}
+            {{ related }}
           </span>
         </div>
       </div>
-
-      <div v-if="analysis.marketContext.advice?.length" class="skill-group">
-        <h4>Consejos para este mercado</h4>
-
-        <div class="recommendation-list">
-          <div
-            v-for="(tip, index) in analysis.marketContext.advice"
-            :key="`${tip}-${index}`"
-            class="recommendation-item"
-          >
-            <span>{{ index + 1 }}</span>
-
-            <p>{{ tip }}</p>
-          </div>
-        </div>
-      </div>
     </div>
+
+    <!-- =====================================================
+     MERCADO LABORAL EN ESPAÑA
+     ===================================================== -->
+
+    <MarketAnalysis
+      v-if="analysis.professionalProfile?.occupation"
+      :cv-id="cvId"
+    />
 
     <!-- =====================================================
      FORTALEZAS / DEBILIDADES

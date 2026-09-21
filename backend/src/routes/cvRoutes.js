@@ -6,13 +6,14 @@ const upload = require('../middleware/uploadMiddleware')
 
 const { cleanCVText } = require('../services/textService')
 
-const { analyzeCV } = require('../services/aiService')
+const { analyzeCV, CV_ANALYSIS_VERSION } = require('../services/aiService')
 
 const { createCVHash } = require('../services/hashService')
 
 const {
   createAnalysis,
   findAnalysisByContentHash,
+  findAnalysisByContentHashGlobal,
   getAllAnalyses,
   getAnalysisById,
   deleteAnalysis
@@ -85,7 +86,7 @@ router.post('/', analysisLimiter, upload.single('cv'), async (req, res) => {
 
     /*
      * Comprobamos si este CV ya fue analizado
-     * anteriormente por este usuario.
+     * anteriormente por esta misma sesión.
      */
 
     const existingAnalysis = await findAnalysisByContentHash(
@@ -129,11 +130,23 @@ router.post('/', analysisLimiter, upload.single('cv'), async (req, res) => {
     }
 
     /*
-     * Si no existe, realizamos el análisis
-     * normalmente con OpenAI.
+     * El contenido de un CV no depende de quién lo sube:
+     * si CUALQUIER otra sesión ya analizó exactamente este
+     * mismo contenido con la versión actual del modelo,
+     * reutilizamos ese resultado en vez de volver a pagar
+     * la llamada a OpenAI. Se guarda igualmente como una
+     * fila propia de esta sesión para que su historial y
+     * borrado funcionen de forma independiente.
      */
 
-    const analysis = await analyzeCV(cleanedText)
+    const globalMatch = await findAnalysisByContentHashGlobal(
+      contentHash,
+      CV_ANALYSIS_VERSION
+    )
+
+    const analysis = globalMatch
+      ? globalMatch.analysis
+      : await analyzeCV(cleanedText)
 
     const savedAnalysis = await createAnalysis({
       sessionId: req.sessionId,
@@ -158,8 +171,34 @@ router.post('/', analysisLimiter, upload.single('cv'), async (req, res) => {
 
       analysis,
 
-      contentHash
+      contentHash,
+
+      modelVersion: CV_ANALYSIS_VERSION
     })
+
+    if (globalMatch) {
+      return res.status(200).json({
+        status: 'success',
+
+        message: 'Este CV ya había sido analizado anteriormente',
+
+        file: {
+          originalName: req.file.originalname,
+          filename: req.file.filename,
+          size: req.file.size,
+          mimetype: req.file.mimetype
+        },
+
+        analysis,
+
+        saved: {
+          id: savedAnalysis.id,
+          createdAt: savedAnalysis.created_at
+        },
+
+        cached: true
+      })
+    }
 
     return res.status(201).json({
       status: 'success',

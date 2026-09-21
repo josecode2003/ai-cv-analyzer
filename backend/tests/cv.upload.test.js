@@ -19,62 +19,80 @@ jest.mock('../src/services/pdfService', () => ({
  * de la API externa.
  */
 
-jest.mock('../src/services/aiService', () => ({
-  analyzeCV: jest.fn(async () => ({
-    personalInfo: {
-      name: 'Candidato Upload Test',
-      email: 'upload@test.com',
-      phone: '',
-      location: '',
-      linkedin: '',
-      github: ''
-    },
+const mockAnalyzeCV = jest.fn(async () => ({
+  personalInfo: {
+    name: 'Candidato Upload Test',
+    email: 'upload@test.com',
+    phone: '',
+    location: '',
+    linkedin: '',
+    github: ''
+  },
 
-    summary: 'Perfil de prueba para testing.',
+  summary: 'Perfil de prueba para testing.',
 
-    experience: [],
+  experience: [],
 
-    education: [],
+  education: [],
 
-    skills: {
-      technical: ['JavaScript', 'Node.js'],
+  skills: {
+    technical: ['JavaScript', 'Node.js'],
 
-      soft: ['Trabajo en equipo'],
+    soft: ['Trabajo en equipo'],
 
-      languages: []
-    },
+    languages: []
+  },
 
-    projects: [],
+  projects: [],
 
+  certifications: [],
+
+  analysis: {
+    strengths: ['Tiene conocimientos técnicos.'],
+
+    weaknesses: ['Es un análisis de prueba.'],
+
+    recommendations: ['Añadir proyectos.']
+  },
+
+  score: {
+    overall: 80,
+    experience: 70,
+    skills: 85,
+    education: 80,
+    projects: 60,
+    presentation: 90
+  },
+
+  overallAssessment: {
+    level: 'Junior',
+
+    profile: 'Desarrollador Web Junior',
+
+    mainIssue: 'Falta de proyectos demostrables.',
+
+    priority: 'medium'
+  },
+
+  professionalProfile: {
+    occupation: 'Desarrollador Web Junior',
+    relatedOccupations: [],
+    sector: 'Tecnología',
+    subsector: 'Desarrollo web',
+    seniority: 'Junior',
+    experienceYears: 1,
+    location: '',
+    region: '',
+    profileType: 'single',
+    keySkills: ['JavaScript', 'Node.js'],
     certifications: [],
+    languages: []
+  }
+}))
 
-    analysis: {
-      strengths: ['Tiene conocimientos técnicos.'],
-
-      weaknesses: ['Es un análisis de prueba.'],
-
-      recommendations: ['Añadir proyectos.']
-    },
-
-    score: {
-      overall: 80,
-      experience: 70,
-      skills: 85,
-      education: 80,
-      projects: 60,
-      presentation: 90
-    },
-
-    overallAssessment: {
-      level: 'Junior',
-
-      profile: 'Desarrollador Web Junior',
-
-      mainIssue: 'Falta de proyectos demostrables.',
-
-      priority: 'medium'
-    }
-  }))
+jest.mock('../src/services/aiService', () => ({
+  analyzeCV: (...args) => mockAnalyzeCV(...args),
+  CV_ANALYSIS_VERSION: 'test-cv-model-v1'
 }))
 
 const pool = require('../src/config/database')
@@ -161,6 +179,43 @@ describe('CV upload integration', () => {
     expect(result.rows[0].candidate_name).toBe('Candidato Upload Test')
 
     expect(result.rows[0].score).toBe(80)
+  })
+
+  /* =======================================================
+     CACHÉ GLOBAL POR CONTENIDO (ENTRE SESIONES)
+     ======================================================= */
+
+  test('el mismo contenido de CV subido por otra sesión no debe volver a llamar a la IA', async () => {
+    const callsBefore = mockAnalyzeCV.mock.calls.length
+
+    const otherSession = await createSessionAgent()
+
+    const response = await otherSession.agent
+      .post('/api/cv')
+      .attach('cv', Buffer.from('%PDF-1.4 archivo PDF de prueba'), {
+        filename: 'copia-del-mismo-cv.pdf',
+        contentType: 'application/pdf'
+      })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.body.status).toBe('success')
+    expect(response.body.cached).toBe(true)
+    expect(response.body.analysis.personalInfo.name).toBe(
+      'Candidato Upload Test'
+    )
+
+    /*
+     * El texto extraído del PDF es idéntico (el mock de
+     * pdfService siempre devuelve el mismo texto), así que
+     * el hash de contenido coincide con el de la sesión
+     * anterior: no debe haberse llamado de nuevo a la IA.
+     */
+
+    expect(mockAnalyzeCV.mock.calls.length).toBe(callsBefore)
+
+    await pool.query('DELETE FROM sessions WHERE id = $1', [
+      otherSession.sessionId
+    ])
   })
 
   /* =======================================================

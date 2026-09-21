@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 
 import { formatFileSize } from '@/utils/format'
 
@@ -16,6 +16,40 @@ const uploadStatus = ref('idle')
 const uploadMessage = ref('')
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024
+
+/*
+ * El análisis es una única petición HTTP (no hay progreso
+ * real que reportar desde el backend), pero mostrar solo
+ * "Analizando CV..." durante varios segundos se percibe
+ * como colgado. Rotamos mensajes indicativos del proceso
+ * real que ocurre en el servidor mientras se espera.
+ */
+const ANALYZING_MESSAGES = [
+  'Analizando tu experiencia...',
+  'Identificando tu perfil profesional...',
+  'Calculando tu puntuación...',
+  'Preparando tu informe...'
+]
+
+const analyzingLabel = ref(ANALYZING_MESSAGES[0])
+
+let analyzingInterval = null
+
+function startAnalyzingRotation() {
+  let index = 0
+
+  analyzingInterval = setInterval(() => {
+    index = (index + 1) % ANALYZING_MESSAGES.length
+    analyzingLabel.value = ANALYZING_MESSAGES[index]
+  }, 1800)
+}
+
+function stopAnalyzingRotation() {
+  clearInterval(analyzingInterval)
+  analyzingLabel.value = ANALYZING_MESSAGES[0]
+}
+
+onUnmounted(stopAnalyzingRotation)
 
 /* =========================================================
    SELECCIONAR ARCHIVO
@@ -98,6 +132,8 @@ function uploadSelectedCV() {
 
   errorMessage.value = ''
 
+  startAnalyzingRotation()
+
   emit('upload', selectedFile.value)
 }
 
@@ -106,6 +142,8 @@ function uploadSelectedCV() {
    ========================================================= */
 
 function setUploadState({ status, message }) {
+  stopAnalyzingRotation()
+
   uploadStatus.value = status
 
   uploadMessage.value = message || ''
@@ -146,7 +184,7 @@ defineExpose({
       :disabled="uploadStatus === 'uploading'"
       @click="uploadSelectedCV"
     >
-      {{ uploadStatus === 'uploading' ? 'Analizando CV...' : 'Analizar CV' }}
+      {{ uploadStatus === 'uploading' ? analyzingLabel : 'Analizar CV' }}
     </button>
 
     <div v-if="uploadMessage" class="upload-message" :class="uploadStatus">

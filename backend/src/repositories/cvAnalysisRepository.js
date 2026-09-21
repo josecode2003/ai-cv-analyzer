@@ -15,6 +15,7 @@ const pool = require('../config/database')
  * @property {string | null} profile
  * @property {string | null} level
  * @property {Record<string, unknown>} [analysis]
+ * @property {string | null} [model_version]
  * @property {Date} created_at
  */
 
@@ -32,9 +33,16 @@ const pool = require('../config/database')
  * @property {string | null} level
  * @property {Record<string, unknown>} analysis
  * @property {string} contentHash
+ * @property {string} modelVersion
  */
 
 /**
+ * Busca un análisis ya existente para ESTA sesión.
+ *
+ * Se comprueba primero porque, si el propio visitante ya
+ * subió este CV antes, no hace falta ni siquiera crear una
+ * fila nueva: se le devuelve directamente la suya.
+ *
  * @param {number} sessionId
  * @param {string} contentHash
  * @returns {Promise<CvAnalysisRow | null>}
@@ -68,6 +76,49 @@ async function findAnalysisByContentHash(sessionId, contentHash) {
 }
 
 /**
+ * Busca un análisis ya existente para este contenido de CV,
+ * generado por CUALQUIER sesión, siempre que se generase con
+ * la misma versión de modelo/prompt.
+ *
+ * El contenido de un CV (una vez normalizado) no depende de
+ * quién lo sube: si dos visitantes distintos suben el mismo
+ * CV, no hay ninguna razón para pagar dos veces la llamada a
+ * OpenAI. Se usa como segundo intento, tras comprobar primero
+ * la propia sesión.
+ *
+ * @param {string} contentHash
+ * @param {string} modelVersion
+ * @returns {Promise<CvAnalysisRow | null>}
+ */
+async function findAnalysisByContentHashGlobal(contentHash, modelVersion) {
+  const result = await pool.query(
+    `
+        SELECT
+          id,
+          original_filename,
+          filename,
+          file_size,
+          mime_type,
+          candidate_name,
+          candidate_email,
+          score,
+          profile,
+          level,
+          analysis,
+          created_at
+        FROM cv_analyses
+        WHERE content_hash = $1
+          AND model_version = $2
+        ORDER BY created_at ASC
+        LIMIT 1
+      `,
+    [contentHash, modelVersion]
+  )
+
+  return result.rows[0] || null
+}
+
+/**
  * @param {CreateAnalysisInput} data
  * @returns {Promise<Pick<CvAnalysisRow, 'id' | 'created_at'>>}
  */
@@ -84,7 +135,8 @@ async function createAnalysis(data) {
     profile,
     level,
     analysis,
-    contentHash
+    contentHash,
+    modelVersion
   } = data
 
   const result = await pool.query(
@@ -101,7 +153,8 @@ async function createAnalysis(data) {
         profile,
         level,
         analysis,
-        content_hash
+        content_hash,
+        model_version
       )
       VALUES (
         $1,
@@ -115,7 +168,8 @@ async function createAnalysis(data) {
         $9,
         $10,
         $11,
-        $12
+        $12,
+        $13
       )
       RETURNING id, created_at
     `,
@@ -131,7 +185,8 @@ async function createAnalysis(data) {
       profile,
       level,
       analysis,
-      contentHash
+      contentHash,
+      modelVersion || null
     ]
   )
 
@@ -220,6 +275,7 @@ async function deleteAnalysis(id, sessionId) {
 module.exports = {
   createAnalysis,
   findAnalysisByContentHash,
+  findAnalysisByContentHashGlobal,
   getAllAnalyses,
   getAnalysisById,
   deleteAnalysis

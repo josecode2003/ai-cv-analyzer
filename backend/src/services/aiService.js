@@ -13,6 +13,18 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
 
+const CV_ANALYSIS_MODEL = 'gpt-4.1'
+
+/*
+ * Se incrementa manualmente cada vez que cambia el modelo
+ * o el prompt de forma significativa (cambia el resultado
+ * esperado para el mismo CV). El caché por hash de contenido
+ * (ver cvAnalysisRepository) solo reutiliza análisis
+ * generados con la misma versión, para no servir resultados
+ * obsoletos tras un cambio de prompt/modelo.
+ */
+const CV_ANALYSIS_VERSION = `${CV_ANALYSIS_MODEL}-v2`
+
 const cvAnalysisSchema = {
   type: 'object',
   additionalProperties: false,
@@ -263,55 +275,68 @@ const cvAnalysisSchema = {
       required: ['level', 'profile', 'mainIssue', 'priority']
     },
 
-    marketContext: {
+    /*
+     * Perfil profesional estructurado y genérico (cualquier
+     * sector/oficio), usado como entrada del módulo de
+     * Market Analysis. A diferencia del antiguo
+     * `marketContext`, este bloque solo describe al
+     * candidato: no contiene ninguna afirmación sobre el
+     * mercado laboral (eso vive en un servicio separado,
+     * respaldado por fuentes externas verificables).
+     */
+    professionalProfile: {
       type: 'object',
       additionalProperties: false,
 
       properties: {
-        profession: {
-          type: 'string'
+        occupation: { type: 'string' },
+
+        relatedOccupations: {
+          type: 'array',
+          items: { type: 'string' }
         },
 
-        demandLevel: {
+        sector: { type: 'string' },
+        subsector: { type: 'string' },
+        seniority: { type: 'string' },
+        experienceYears: { type: 'number' },
+        location: { type: 'string' },
+        region: { type: 'string' },
+
+        profileType: {
           type: 'string',
-          enum: ['alta', 'media', 'baja']
+          enum: ['single', 'hybrid']
         },
 
-        demandExplanation: {
-          type: 'string'
-        },
-
-        salaryRange: {
-          type: 'string'
-        },
-
-        keyCertifications: {
+        keySkills: {
           type: 'array',
-          items: {
-            type: 'string'
-          }
+          items: { type: 'string' }
         },
 
-        trends: {
-          type: 'string'
-        },
-
-        advice: {
+        certifications: {
           type: 'array',
-          items: {
-            type: 'string'
-          }
+          items: { type: 'string' }
+        },
+
+        languages: {
+          type: 'array',
+          items: { type: 'string' }
         }
       },
 
       required: [
-        'profession',
-        'demandLevel',
-        'demandExplanation',
-        'salaryRange',
-        'keyCertifications',
-        'trends',
-        'advice'
+        'occupation',
+        'relatedOccupations',
+        'sector',
+        'subsector',
+        'seniority',
+        'experienceYears',
+        'location',
+        'region',
+        'profileType',
+        'keySkills',
+        'certifications',
+        'languages'
       ]
     }
   },
@@ -327,7 +352,7 @@ const cvAnalysisSchema = {
     'analysis',
     'score',
     'overallAssessment',
-    'marketContext'
+    'professionalProfile'
   ]
 }
 
@@ -344,7 +369,16 @@ async function analyzeCV(cvText) {
   }
 
   const response = await client.responses.create({
-    model: 'gpt-4.1',
+    model: CV_ANALYSIS_MODEL,
+
+    /*
+     * La puntuación debe ser reproducible: el mismo CV debe
+     * producir la misma puntuación. temperature: 0 minimiza
+     * la variación entre llamadas idénticas (no la elimina
+     * por completo, dado el propio motor de inferencia, pero
+     * es la mitigación estándar disponible vía la API).
+     */
+    temperature: 0,
 
     input: [
       {
@@ -644,25 +678,27 @@ A junior/entry-level candidate should not receive an artificially low score simp
 
 At the same time, the CV should not receive a high score if important evidence is genuinely missing.
 
-MARKET CONTEXT (SPAIN)
+PROFESSIONAL PROFILE
 
-56. This section is DIFFERENT from the rest of the analysis: it is not extracted from the CV, it is your own informed assessment of the current Spanish (España) labor market for the candidate's specific profession. The strict "never invent" rules above apply to CV content, not to this section — here you are expected to provide your best general knowledge.
+56. This section extracts a structured, occupation-agnostic profile from the CV. It feeds a SEPARATE market-intelligence module that looks up real, current, verifiable Spanish labor-market data — so, unlike the rest of the analysis, do not describe the labor market here at all. Only describe the CANDIDATE, strictly from CV evidence, exactly like every other section.
 
-57. Be explicit that this is an approximate, general estimate, not official statistics — phrase salaryRange and demandExplanation accordingly (e.g. "aproximadamente", "orientativo").
+57. occupation: the specific occupation/trade detected from the CV, in Spanish, as specific as the CV evidence allows (e.g. "Fontanero", "Camarero de sala", "Desarrollador Backend Junior", "Enfermera de UCI", "Auxiliar administrativo"). Never limit yourself to a fixed catalogue: use whatever term best matches the CV, for ANY sector (technology, healthcare, hospitality, administration, logistics, industry, construction, education, agriculture, retail, etc.).
 
-58. profession: the specific profession/trade detected from the CV (e.g. "Fontanero", "Camarero de sala", "Desarrollador Backend Junior", "Albañil").
+58. relatedOccupations: other occupations the candidate could realistically also apply to given their actual skills/experience. Empty array if none apply.
 
-59. demandLevel: "alta", "media" or "baja" — your best assessment of current demand for this profession in Spain.
+59. sector / subsector: the economic sector and subsector the candidate's occupation belongs to (e.g. sector "Sanidad", subsector "Cuidados intensivos"; sector "Hostelería", subsector "Restauración"). Leave subsector empty if it cannot be reasonably determined.
 
-60. demandExplanation: 1-2 sentences justifying that demand level (e.g. shortage of skilled tradespeople in a region/sector, market saturation, seasonal demand, growth of a sector).
+60. seniority: the candidate's career stage, using whichever term is standard for their actual trade (see rule 51 examples). Must be consistent with overallAssessment.level.
 
-61. salaryRange: an approximate monthly gross salary range in euros typical for this profession and experience level in Spain (e.g. "aprox. 1.300-1.700 €/mes brutos para un oficial con experiencia inicial"). If truly impossible to estimate, state that clearly instead of guessing wildly.
+61. experienceYears: total years of relevant professional experience, estimated only from dates explicitly present in the CV. Use 0 if it cannot be determined.
 
-62. keyCertifications: certificates, "carnés profesionales", professional qualifications or homologations that are valued or required for this profession in Spain (e.g. certificado de manipulador de alimentos for hostelería, carnet de instalador autorizado for electricistas, PRL 20h/60h, certificado de profesionalidad). Empty array if genuinely not applicable.
+62. location / region: the city/area and, if identifiable, the Spanish comunidad autónoma stated in the CV (personalInfo.location). Leave both empty if the CV does not state a location — never guess or invent one.
 
-63. trends: 1-2 sentences on relevant current trends for this profession/sector in Spain (e.g. digitalización, escasez de mano de obra cualificada, crecimiento o contracción del sector, estacionalidad).
+63. profileType: "hybrid" when the CV clearly spans two or more distinct professional dimensions (e.g. "Marketing + análisis de datos"), otherwise "single".
 
-64. advice: 2-4 concrete, actionable pieces of advice to improve this candidate's employability specifically in the Spanish market for their profession (e.g. specific certifications worth getting, platforms or gremios/colegios profesionales to register with, in-demand specializations). Never recommend inventing experience or credentials the candidate does not have.
+64. keySkills: the 5-15 most relevant skills (technical or trade-specific) for identifying this candidate's market segment, drawn only from skills.technical/soft already extracted.
+
+65. certifications / languages: short labels drawn only from the certifications and skills.languages already extracted (do not invent new ones here).
 
 Return ONLY the JSON structure requested by the schema.
         `
@@ -697,5 +733,6 @@ ${cvText}
 }
 
 module.exports = {
-  analyzeCV
+  analyzeCV,
+  CV_ANALYSIS_VERSION
 }

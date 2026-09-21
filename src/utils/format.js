@@ -57,6 +57,32 @@ export function formatDate(date) {
   }
 }
 
+/* =========================================================
+   MARKET ANALYSIS — NIVEL DE CONFIANZA DE UN DATO
+   ========================================================= */
+
+const CONFIDENCE_LABELS = {
+  dato_oficial: 'Dato oficial',
+  otra_fuente: 'Otra fuente',
+  estimacion: 'Estimación',
+  sin_datos_suficientes: 'Sin datos suficientes'
+}
+
+const CONFIDENCE_CLASSES = {
+  dato_oficial: 'confidence-official',
+  otra_fuente: 'confidence-source',
+  estimacion: 'confidence-estimate',
+  sin_datos_suficientes: 'confidence-none'
+}
+
+export function getConfidenceLabel(confidence) {
+  return CONFIDENCE_LABELS[confidence] || 'Sin datos suficientes'
+}
+
+export function getConfidenceClass(confidence) {
+  return CONFIDENCE_CLASSES[confidence] || 'confidence-none'
+}
+
 export function formatComparisonScore(score) {
   if (typeof score !== 'number') {
     return 0

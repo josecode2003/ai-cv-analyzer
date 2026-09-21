@@ -26,6 +26,10 @@ async function uploadSelectedCV(file) {
     })
 
     await loadAnalyses()
+
+    if (response.saved?.id) {
+      router.push({ name: 'analysis', params: { id: response.saved.id } })
+    }
   } catch (error) {
     console.error('Error analizando CV:', error)
 

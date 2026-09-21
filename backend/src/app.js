@@ -7,6 +7,7 @@ const multer = require('multer')
 const cookieParser = require('cookie-parser')
 
 const cvRoutes = require('./routes/cvRoutes')
+const marketRoutes = require('./routes/marketRoutes')
 const { attachSession } = require('./middleware/sessionMiddleware')
 
 const app = express()
@@ -81,6 +82,7 @@ app.use(attachSession)
    ========================================================= */
 
 app.use('/api/cv', cvRoutes)
+app.use('/api/cv', marketRoutes)
 
 /* =========================================================
    JOB COMPARISONS

@@ -73,6 +73,7 @@ function analyzeAnotherCV() {
     <AnalysisDetail
       v-else-if="analysis"
       :analysis="analysis"
+      :cv-id="route.params.id"
       @back="goToAnalyses"
       @compare="openComparisonForm"
       @analyze-another="analyzeAnotherCV"

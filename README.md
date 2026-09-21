@@ -12,10 +12,11 @@ El proyecto nace con una idea sencilla: **utilizar tecnologías que he aprendido
 
 El usuario puede, sin necesidad de registrarse ni iniciar sesión:
 
-- Subir su CV en formato PDF.
+- Subir su CV en formato PDF, para prácticamente cualquier profesión u oficio (no solo perfiles de oficina/tecnología).
 - Analizar el contenido del CV mediante Inteligencia Artificial.
-- Obtener información estructurada sobre su perfil profesional.
-- Consultar una puntuación global del CV.
+- Obtener información estructurada sobre su perfil profesional (ocupación, sector, subsector, senioridad, ubicación, competencias clave).
+- Consultar una puntuación global del CV, reproducible para un mismo contenido.
+- Consultar la situación del mercado laboral español para su perfil, con datos verificables, fuente y fecha.
 - Guardar y consultar sus análisis anteriores.
 - Eliminar análisis del historial.
 - Comparar uno de sus CV con una oferta de empleo.
@@ -26,7 +27,7 @@ El usuario puede, sin necesidad de registrarse ni iniciar sesión:
 - Recibir recomendaciones para mejorar la candidatura.
 - Consultar posteriormente las comparaciones realizadas.
 
-Además, el proyecto incorpora mecanismos de **hashing y reutilización de resultados** para evitar procesamientos y llamadas innecesarias a la API de Inteligencia Artificial.
+Además, el proyecto incorpora mecanismos de **hashing y reutilización de resultados** para evitar procesamientos y llamadas innecesarias a la API de Inteligencia Artificial, tanto para el análisis del CV como para el análisis de mercado.
 
 ---
 
@@ -77,7 +78,7 @@ Resultado
 El análisis permite obtener información como:
 
 - Datos personales.
-- Perfil profesional.
+- Perfil profesional estructurado (ver más abajo).
 - Nivel profesional.
 - Experiencia.
 - Formación.
@@ -87,25 +88,29 @@ El análisis permite obtener información como:
 
 El resultado se guarda en PostgreSQL para poder consultarlo posteriormente.
 
+La llamada al modelo se hace con `temperature: 0` precisamente para que la puntuación sea lo más reproducible posible: el mismo CV, con la misma versión de prompt/modelo, debe producir la misma puntuación.
+
 ---
 
 ## ♻️ Detección de CV duplicados
 
-Para evitar procesamientos innecesarios, la aplicación genera una huella basada en el contenido limpio del CV.
+Para evitar procesamientos innecesarios, la aplicación genera una huella basada en el contenido limpio del CV, **no en el nombre del archivo**: `CV_Manu.pdf` y `curriculum_final.pdf` se consideran el mismo CV si su contenido relevante es idéntico.
 
 ```text
 CV
  ↓
-Texto limpio
+Extracción del texto
  ↓
-Hash
+Limpieza y normalización
  ↓
-¿Existe?
- ├── Sí → Recuperar análisis existente
+Hash SHA-256
+ ↓
+¿Existe (de cualquier sesión, misma versión de modelo)?
+ ├── Sí → Reutilizar análisis existente
  └── No → Analizar mediante IA
 ```
 
-Si el usuario vuelve a subir exactamente el mismo contenido, la aplicación puede recuperar el análisis existente en lugar de volver a consumir la API de IA.
+El caché es **global**, no por sesión: si dos visitantes distintos suben exactamente el mismo CV, el segundo reutiliza el análisis del primero en vez de pagar una segunda llamada a OpenAI (cada uno conserva igualmente su propia fila en su historial, para poder listarlo/borrarlo de forma independiente). Cada análisis guarda además la versión del modelo/prompt (`model_version`) con la que se generó, así que un cambio de prompt no sirve por error un resultado calculado con las reglas antiguas.
 
 Esto permite:
 
@@ -115,6 +120,59 @@ Esto permite:
 - Mejorar el tiempo de respuesta.
 
 ---
+
+## 🧭 Detección de perfil profesional
+
+La aplicación no está limitada a perfiles de oficina o tecnología: analiza CVs de prácticamente cualquier profesión u oficio (sanidad, hostelería, administración, logística, industria, construcción, educación, etc.), sin ninguna lista cerrada de profesiones en el código.
+
+De cada CV se extrae un `professionalProfile` estructurado y genérico:
+
+- Ocupación y ocupaciones relacionadas.
+- Sector y subsector.
+- Senioridad y años de experiencia.
+- Ubicación (solo si el CV la indica; nunca se inventa).
+- Competencias clave, certificaciones e idiomas.
+- Tipo de perfil: `single` o `hybrid` (para perfiles que combinan dos disciplinas, p. ej. "Marketing + análisis de datos").
+
+Este perfil es la única entrada del módulo de **Inteligencia de mercado laboral** (ver siguiente sección): el análisis de mercado nunca vuelve a leer el CV original, solo este perfil ya extraído.
+
+---
+
+## 📊 Inteligencia de mercado laboral en España
+
+Además del análisis del propio CV, la aplicación ofrece una **Situación del mercado laboral** para el perfil detectado, con una regla no negociable:
+
+> **El modelo de IA no puede usar su conocimiento interno como fuente de datos del mercado.** Cualquier cifra (demanda, salario, tendencias...) debe proceder de una búsqueda real y citar su fuente y fecha. Si no se encuentra un dato fiable, se muestra explícitamente "No hay datos suficientes para estimar este indicador" en vez de inventarlo.
+
+Arquitectura:
+
+```text
+professionalProfile (ya extraído del CV)
+ ↓
+Firma de perfil (ocupación + sector + subsector + senioridad + ubicación)
+ ↓
+¿Existe un Market Analysis en caché para esta firma?
+ ├── Sí → Reutilizar (sin llamar a ningún servicio externo)
+ └── No → Buscar en la web (herramienta `web_search` de la API de OpenAI,
+          priorizando SEPE, INE, Ministerio de Trabajo, Seguridad Social,
+          EURES, Eurostat, observatorios de empleo e informes laborales
+          reconocidos)
+          ↓
+        Cada dato declara su propio nivel de confianza:
+        dato oficial / otra fuente / estimación / sin datos suficientes
+          ↓
+        Guardar en `market_analyses` y devolver al usuario
+```
+
+Puntos clave del diseño:
+
+- **Desacoplado del análisis del CV**: el CV Analysis y el Market Analysis son procesos independientes (`cvAnalysisRepository` / `marketAnalysisRepository`, `aiService` / `marketAnalysisService`). Se puede actualizar el análisis de mercado sin volver a procesar ningún PDF.
+- **Caché global por perfil, no por CV ni por sesión**: dos CVs distintos con el mismo perfil (misma ocupación/sector/senioridad/ubicación) comparten el mismo Market Analysis.
+- **Versionado independiente**: `MARKET_ANALYSIS_VERSION` (modelo/prompt) y `MARKET_DATA_VERSION` (datos) permiten invalidar la caché de mercado — por ejemplo, porque los datos han quedado desactualizados — sin tocar ningún CV ya analizado, y sin desplegar código nuevo (`MARKET_DATA_VERSION` es una variable de entorno).
+- **Resiliente a fallos externos**: si la búsqueda web falla o tarda demasiado (timeout de 45 s), el endpoint responde igualmente con éxito (`available: false` y un mensaje claro), sin romper la petición ni inventar un resultado de repuesto.
+- **La sección "Perfil detectado"** en el informe muestra ocupación, sector, subsector, senioridad y ubicación; **"Situación del mercado laboral"** muestra demanda, salario, tendencias, sectores que contratan, puestos relacionados, competencias demandadas, distribución geográfica, recomendaciones y la lista de fuentes consultadas con su fecha.
+
+> **Decisión de arquitectura documentada:** esta versión usa la herramienta de búsqueda web integrada en la API de OpenAI (Responses API, `tools: [{ type: 'web_search' }]`) como fuente de datos en tiempo real, en vez de integrar directamente las APIs estadísticas oficiales (SEPE/INE/Eurostat no ofrecen una API REST simple de "dame la demanda actual de la profesión X"; integrarlas de forma robusta sería un proyecto en sí mismo). Es la vía más razonable, dentro del alcance de esta iteración, para cumplir la regla de "no inventar datos" citando fuente y fecha reales. Migrar a datasets oficiales descargados/indexados es una mejora futura natural, sin cambiar el resto de la arquitectura.
 
 # 🎯 Comparación entre CV y oferta de empleo
 
@@ -206,9 +264,13 @@ El proyecto incorpora:
 - Comprobación de propiedad de los recursos.
 - Variables sensibles mediante `.env`.
 - Exclusión de `.env` mediante `.gitignore`.
-- Eliminación de archivos PDF temporales después de su procesamiento.
+- Eliminación de archivos PDF temporales después de su procesamiento: el PDF original nunca se conserva, solo el resultado estructurado del análisis.
+- Minimización de datos en el Market Analysis: la tabla `market_analyses` no almacena ningún dato personal del CV (ni nombre, ni email, ni el propio texto del currículum), solo el perfil profesional agregado (ocupación/sector/ubicación) y el informe de mercado, que es información pública sobre el mercado laboral, no sobre la persona.
+- Timeout explícito (45 s) en las llamadas a la API de búsqueda de mercado, para que una fuente externa lenta no bloquee la petición del usuario.
 
 Las credenciales y claves privadas no forman parte del repositorio.
+
+**Nota RGPD:** la aplicación aplica buenas prácticas técnicas de privacidad (sesiones anónimas, minimización de datos, no persistencia del PDF), pero esto **no constituye una auditoría legal**. Antes de un uso en producción con usuarios reales conviene una revisión de cumplimiento RGPD por una persona cualificada, especialmente en torno a la base legal de tratamiento y el tiempo de retención de `cv_analyses`.
 
 ---
 
@@ -240,8 +302,9 @@ Las credenciales y claves privadas no forman parte del repositorio.
 
 ## Inteligencia Artificial
 
-- **OpenAI API**
-- Modelo `gpt-5.6-luna`
+- **OpenAI API** (Responses API, salida estructurada con `json_schema` en modo `strict`)
+- Modelo `gpt-4.1`
+- Herramienta `web_search` nativa de la API, usada exclusivamente por el Market Analysis para fundamentar sus datos en fuentes reales
 
 ## Procesamiento de documentos
 
@@ -261,12 +324,28 @@ ai-cv-analyzer/
 │
 ├── backend/
 │   ├── migrations/
+│   │   └── 001_...  →  007_add_market_analysis.js
 │   ├── src/
 │   │   ├── config/
+│   │   │   ├── database.js
+│   │   │   └── versions.js
 │   │   ├── middleware/
 │   │   ├── repositories/
+│   │   │   ├── cvAnalysisRepository.js
+│   │   │   ├── jobComparisonRepository.js
+│   │   │   ├── marketAnalysisRepository.js
+│   │   │   └── sessionRepository.js
 │   │   ├── routes/
+│   │   │   ├── cvRoutes.js
+│   │   │   ├── jobComparisonRoutes.js
+│   │   │   └── marketRoutes.js
 │   │   ├── services/
+│   │   │   ├── aiService.js
+│   │   │   ├── marketAnalysisService.js
+│   │   │   ├── jobComparisonService.js
+│   │   │   ├── hashService.js
+│   │   │   ├── pdfService.js
+│   │   │   └── textService.js
 │   │   ├── app.js
 │   │   └── server.js
 │   ├── tests/
@@ -277,6 +356,9 @@ ai-cv-analyzer/
 ├── src/
 │   ├── components/
 │   │   ├── analysis/
+│   │   │   ├── AnalysisDetail.vue
+│   │   │   ├── MarketAnalysis.vue
+│   │   │   └── MarketEvidence.vue
 │   │   └── cv/
 │   │
 │   ├── layouts/
@@ -300,6 +382,7 @@ ai-cv-analyzer/
 │   │   ├── api.js
 │   │   ├── cvService.js
 │   │   ├── analysisService.js
+│   │   ├── marketService.js
 │   │   └── comparisonService.js
 │   │
 │   ├── utils/
@@ -438,6 +521,14 @@ GET    /api/cv/:id
 DELETE /api/cv/:id
 ```
 
+## Mercado laboral
+
+```http
+POST /api/cv/:id/market-analysis
+```
+
+Genera (o recupera de caché) el análisis de mercado laboral para el perfil profesional detectado en el CV `:id`. Nunca reprocesa el CV: solo lee su `professionalProfile` ya extraído. Devuelve `available: false` con un mensaje claro, en vez de un error, cuando no hay perfil detectado o la fuente externa no está disponible.
+
 ## Comparaciones
 
 ```http
@@ -524,6 +615,11 @@ COOKIE_SECRET=una_cadena_aleatoria_larga
 # Application
 NODE_ENV=development
 FRONTEND_ORIGIN=http://localhost:5173
+
+# Market Analysis (opcional)
+# Cambiar este valor invalida la caché de mercado (fuerza a
+# volver a consultar fuentes externas) sin reprocesar ningún CV.
+MARKET_DATA_VERSION=2026-09-market-v1
 ```
 
 ## Frontend
@@ -550,11 +646,11 @@ Con PostgreSQL en marcha y `backend/.env` configurado, ejecuta desde `backend/`:
 npm run migrate
 ```
 
-Esto crea la base de datos (si no existe todavía), las tablas (`sessions`, `cv_analyses`, `job_comparisons`) y las columnas de hash usadas para el sistema de caché.
+Esto crea la base de datos (si no existe todavía), las tablas (`sessions`, `cv_analyses`, `job_comparisons`, `market_analyses`) y las columnas de hash/versión usadas para el sistema de caché.
 
 Este paso es obligatorio antes de arrancar el backend por primera vez.
 
-Si necesitas añadir un cambio de esquema en el futuro, crea un nuevo archivo en `backend/migrations/` siguiendo la numeración (`007_...`), exportando `{ version, up }`.
+Si necesitas añadir un cambio de esquema en el futuro, crea un nuevo archivo en `backend/migrations/` siguiendo la numeración (`008_...`), exportando `{ version, up }`.
 
 ---
 
@@ -592,7 +688,7 @@ http://localhost:5173
 
 # ✅ Calidad de código
 
-El proyecto usa **ESLint** y **Prettier** tanto en el frontend como en el backend, y una suite de **Jest** con 33 tests en el backend.
+El proyecto usa **ESLint** y **Prettier** tanto en el frontend como en el backend, y una suite de **Jest** con 47 tests en el backend (incluye acceso sin login, subida sin cuenta, caché por hash entre sesiones, aislamiento entre sesiones, detección de perfil en 6 sectores distintos, perfiles híbridos, caché y fallos del Market Analysis).
 
 Desde la raíz (frontend) o desde `backend/` (backend):
 
@@ -627,11 +723,12 @@ La aplicación utiliza **PostgreSQL** para almacenar la información necesaria p
 Entre los datos almacenados se encuentran:
 
 - Sesiones anónimas.
-- Análisis de CV.
+- Análisis de CV (incluye el perfil profesional estructurado).
 - Resultados de análisis.
 - Comparaciones.
 - Resultados de comparaciones.
-- Hashes utilizados para evitar procesamiento duplicado.
+- Análisis de mercado laboral (`market_analyses`), sin ningún dato personal.
+- Hashes y versiones utilizados para evitar procesamiento duplicado.
 
 El acceso a la base de datos se realiza desde el backend.
 
@@ -639,20 +736,24 @@ El acceso a la base de datos se realiza desde el backend.
 
 # 🤖 Inteligencia Artificial
 
-La aplicación utiliza la **OpenAI API** para realizar dos procesos principales.
+La aplicación utiliza la **OpenAI API** para tres procesos independientes, cada uno con su propio modelo/prompt y su propia caché.
 
 ### Análisis de currículums
 
 El texto extraído del PDF se procesa para obtener una estructura de información relacionada con:
 
 - Información personal.
-- Perfil profesional.
+- Perfil profesional estructurado (ocupación, sector, subsector, senioridad, ubicación, competencias).
 - Experiencia.
 - Formación.
 - Habilidades.
 - Nivel profesional.
 - Evaluación general.
-- Puntuación.
+- Puntuación (con `temperature: 0` para maximizar la reproducibilidad).
+
+### Análisis de mercado laboral
+
+A partir del perfil profesional ya extraído (nunca del CV original), se consulta la web mediante la herramienta `web_search` de la API, priorizando fuentes oficiales españolas, para generar un informe con demanda, salario, tendencias, sectores, puestos relacionados, competencias demandadas, distribución geográfica y fuentes citadas con fecha. Ver la sección [📊 Inteligencia de mercado laboral en España](#-inteligencia-de-mercado-laboral-en-españa) para el detalle completo de las reglas anti-alucinación.
 
 ### Comparación con ofertas
 
@@ -714,24 +815,26 @@ Esto permite:
 La aplicación cuenta con diferentes vistas, accesibles sin necesidad de crear una cuenta:
 
 - 🏠 Inicio (subida de CV).
+- 🔎 Detalle de análisis: puntuación, perfil detectado, fortalezas/debilidades y situación del mercado laboral.
 - 📊 Historial de análisis.
-- 🔎 Detalle de análisis.
 - 🎯 Formulario de comparación.
 - 📈 Resultado de compatibilidad.
 - 🗂️ Historial de comparaciones.
 
-La interfaz está diseñada para mantener un flujo sencillo:
+La interfaz está diseñada para mantener un flujo sencillo, con mensajes de estado claros durante el procesamiento (p. ej. "Identificando tu perfil profesional...", "Analizando el mercado laboral de tu sector en España...") en vez de detalles técnicos:
 
 ```text
 Inicio
   ↓
 Subir CV
   ↓
-Análisis
+Análisis (navegación automática al resultado)
   ↓
-Comparar con oferta
+Puntuación + perfil detectado
   ↓
-Resultado
+Situación del mercado laboral
+  ↓
+Comparar con oferta (opcional)
   ↓
 Historial
 ```
@@ -777,8 +880,9 @@ Durante el desarrollo he trabajado con:
 - Validación de datos.
 - Gestión de errores.
 - Seguridad básica de aplicaciones web.
-- Hashing y reutilización de resultados.
-- Arquitectura basada en servicios y repositorios.
+- Hashing, versionado y reutilización de resultados (caché global, no solo por usuario).
+- Diseño de sistemas de IA verificables: separar "dato con fuente" de "interpretación" o "estimación" en el propio schema, no solo en el prompt.
+- Arquitectura basada en servicios y repositorios, con procesos desacoplados (CV Analysis vs. Market Analysis) para poder evolucionar cada uno de forma independiente.
 - Git y GitHub.
 
 Uno de los principales aprendizajes del proyecto ha sido entender cómo conectar todas estas piezas para construir una aplicación que no se limite a una interfaz, sino que tenga **frontend, backend, base de datos, gestión de sesiones, procesamiento de información e integración con servicios externos**.
@@ -791,14 +895,15 @@ La versión actual cubre el alcance planteado para el proyecto.
 
 Como posibles ampliaciones futuras podrían incorporarse:
 
+- Integrar directamente datasets/APIs estadísticas oficiales (INE, SEPE) además de la búsqueda web, para el Market Analysis.
+- Restringir el `web_search` del Market Analysis a una lista de dominios permitidos (`filters.allowed_domains`), para sesgar aún más hacia fuentes oficiales.
 - Generación automática de CV optimizados.
 - Exportación de análisis a PDF.
 - Generación de cartas de presentación.
-- Recomendaciones profesionales personalizadas.
 - Dashboard con estadísticas.
 - Comparación con múltiples ofertas simultáneamente.
 - Sistema de favoritos.
-- Tests automatizados adicionales.
+- Tests E2E de interfaz (Playwright/Cypress).
 - Despliegue de la aplicación en producción.
 
 Estas funcionalidades quedan fuera del alcance de la versión actual.
