@@ -262,7 +262,9 @@ Use web_search to find current, verifiable data about demand, salary ranges, tre
 
   const result = JSON.parse(response.output_text)
 
-  return sanitizeMarketResult(result)
+  const formatSanitized = sanitizeMarketResultFormat(result)
+
+  return verifyMarketResultSources(formatSanitized)
 }
 
 /*
@@ -280,7 +282,7 @@ const URL_PATTERN = /^https?:\/\/[^\s]+\.[^\s]+$/i
  * @param {Record<string, unknown>} evidence
  * @returns {Record<string, unknown>}
  */
-function sanitizeEvidence(evidence) {
+function sanitizeEvidenceFormat(evidence) {
   if (!evidence || typeof evidence !== 'object') {
     return evidence
   }
@@ -310,19 +312,21 @@ function sanitizeEvidence(evidence) {
  * @param {Record<string, unknown>} result
  * @returns {Record<string, unknown>}
  */
-function sanitizeMarketResult(result) {
+function sanitizeMarketResultFormat(result) {
   const sanitized = { ...result }
 
   for (const key of ['situacionActual', 'demand', 'salary']) {
     if (sanitized[key]) {
-      sanitized[key] = sanitizeEvidence(/** @type {any} */ (sanitized[key]))
+      sanitized[key] = sanitizeEvidenceFormat(
+        /** @type {any} */ (sanitized[key])
+      )
     }
   }
 
   for (const key of ['trends', 'geographicDistribution']) {
     if (Array.isArray(sanitized[key])) {
       sanitized[key] = /** @type {any[]} */ (sanitized[key]).map(
-        sanitizeEvidence
+        sanitizeEvidenceFormat
       )
     }
   }
@@ -336,8 +340,160 @@ function sanitizeMarketResult(result) {
   return sanitized
 }
 
+/*
+ * Defensa contra alucinaciones de CONTENIDO, no solo de
+ * formato: el modelo puede citar una URL con forma
+ * perfectamente válida, en un dominio real, que simplemente
+ * no existe (comprobado en producción: una URL de udit.es con
+ * forma válida que la propia web redirige a su página de
+ * error 404). Antes de devolver el resultado, comprobamos en
+ * vivo que cada URL citada con confianza alta responde
+ * realmente.
+ *
+ * Solo degradamos ante evidencia clara de que la página no
+ * existe (404/410 tras seguir redirecciones). Un error de red,
+ * un timeout o un 401/403/429 (bloqueo de bots, límite de
+ * peticiones) son ambiguos -no prueban que la fuente sea
+ * falsa- así que en esos casos mantenemos la cita del modelo:
+ * preferimos no castigar una fuente real que un sitio bloquea
+ * a bots.
+ */
+
+const URL_VERIFY_TIMEOUT_MS = 4000
+
+/**
+ * @param {string} url
+ * @returns {Promise<boolean>} false solo si se confirma que la página no existe (404/410).
+ */
+async function verifyUrlReachable(url) {
+  try {
+    const headResponse = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
+    })
+
+    if (headResponse.status === 404 || headResponse.status === 410) {
+      return false
+    }
+
+    if (headResponse.status !== 405) {
+      return true
+    }
+
+    /*
+     * Algunos servidores no aceptan HEAD (405); reintentamos
+     * con GET antes de concluir nada.
+     */
+    const getResponse = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
+    })
+
+    return getResponse.status !== 404 && getResponse.status !== 410
+  } catch {
+    return true
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} result
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function verifyMarketResultSources(result) {
+  const verified = { ...result }
+
+  const citedEvidenceEntries = []
+
+  for (const key of ['situacionActual', 'demand', 'salary']) {
+    const evidence = /** @type {any} */ (verified[key])
+    if (isCitedEvidence(evidence)) {
+      citedEvidenceEntries.push({ container: verified, key, evidence })
+    }
+  }
+
+  for (const key of ['trends', 'geographicDistribution']) {
+    if (Array.isArray(verified[key])) {
+      ;/** @type {any[]} */ (verified[key]).forEach((evidence, index) => {
+        if (isCitedEvidence(evidence)) {
+          citedEvidenceEntries.push({
+            container: verified[key],
+            key: index,
+            evidence
+          })
+        }
+      })
+    }
+  }
+
+  const urlsToVerify = new Set(
+    citedEvidenceEntries.map(entry => entry.evidence.sourceUrl)
+  )
+
+  if (Array.isArray(verified.sourcesUsed)) {
+    for (const source of /** @type {any[]} */ (verified.sourcesUsed)) {
+      if (typeof source?.url === 'string') {
+        urlsToVerify.add(source.url)
+      }
+    }
+  }
+
+  const brokenUrls = new Set()
+
+  await Promise.all(
+    Array.from(urlsToVerify).map(async url => {
+      const reachable = await verifyUrlReachable(url)
+      if (!reachable) {
+        brokenUrls.add(url)
+      }
+    })
+  )
+
+  if (brokenUrls.size === 0) {
+    return verified
+  }
+
+  for (const { container, key, evidence } of citedEvidenceEntries) {
+    if (brokenUrls.has(evidence.sourceUrl)) {
+      container[key] = {
+        ...evidence,
+        confidence: 'estimacion',
+        source: '',
+        sourceUrl: '',
+        dataDate: ''
+      }
+    }
+  }
+
+  if (Array.isArray(verified.sourcesUsed)) {
+    verified.sourcesUsed = /** @type {any[]} */ (verified.sourcesUsed).filter(
+      source => !brokenUrls.has(source.url)
+    )
+  }
+
+  return verified
+}
+
+/**
+ * @param {any} evidence
+ * @returns {boolean}
+ */
+function isCitedEvidence(evidence) {
+  return (
+    evidence &&
+    typeof evidence === 'object' &&
+    (evidence.confidence === 'dato_oficial' ||
+      evidence.confidence === 'otra_fuente') &&
+    typeof evidence.sourceUrl === 'string' &&
+    evidence.sourceUrl.length > 0
+  )
+}
+
 module.exports = {
   analyzeMarketForProfile,
+  verifyMarketResultSources,
+  sanitizeMarketResultFormat,
   MARKET_ANALYSIS_VERSION,
   MARKET_DATA_VERSION
 }
