@@ -4,6 +4,12 @@ const OpenAI = /** @type {any} */ (require('openai'))
 
 const { MARKET_DATA_VERSION } = require('../config/versions')
 
+const { safeFetch } = require('./urlSafetyService')
+
+const { fetchSourceContent } = require('./sourceContentService')
+
+const { verifyClaim } = require('./claimVerificationService')
+
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
@@ -264,7 +270,9 @@ Use web_search to find current, verifiable data about demand, salary ranges, tre
 
   const formatSanitized = sanitizeMarketResultFormat(result)
 
-  return verifyMarketResultSources(formatSanitized)
+  const urlVerified = await verifyMarketResultSources(formatSanitized)
+
+  return verifyClaimsAgainstContent(urlVerified)
 }
 
 /*
@@ -363,15 +371,24 @@ const URL_VERIFY_TIMEOUT_MS = 4000
 
 /**
  * @param {string} url
- * @returns {Promise<boolean>} false solo si se confirma que la página no existe (404/410).
+ * @returns {Promise<boolean>} false si se confirma que la página no existe (404/410) o si la URL (o alguna redirección) no es segura (SSRF).
  */
 async function verifyUrlReachable(url) {
   try {
-    const headResponse = await fetch(url, {
+    const headResponse = await safeFetch(url, {
       method: 'HEAD',
-      redirect: 'follow',
       signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
     })
+
+    /*
+     * safeFetch devuelve null cuando la URL (o alguna redirección
+     * intermedia) apunta a infraestructura interna. Una URL así
+     * nunca es una fuente legítima, así que se trata igual que un
+     * 404: no confiable.
+     */
+    if (!headResponse) {
+      return false
+    }
 
     if (headResponse.status === 404 || headResponse.status === 410) {
       return false
@@ -385,15 +402,114 @@ async function verifyUrlReachable(url) {
      * Algunos servidores no aceptan HEAD (405); reintentamos
      * con GET antes de concluir nada.
      */
-    const getResponse = await fetch(url, {
+    const getResponse = await safeFetch(url, {
       method: 'GET',
-      redirect: 'follow',
       signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
     })
+
+    if (!getResponse) {
+      return false
+    }
 
     return getResponse.status !== 404 && getResponse.status !== 410
   } catch {
     return true
+  }
+}
+
+/**
+ * Recorre todos los campos de tipo "evidencia" del resultado
+ * (situacionActual/demand/salary son objetos únicos;
+ * trends/geographicDistribution son arrays) y devuelve una lista
+ * plana de referencias editables `{ container, key, evidence }`,
+ * para no duplicar este recorrido en cada paso de verificación.
+ *
+ * @param {Record<string, unknown>} result
+ * @param {(evidence: any) => boolean} [predicate]
+ * @returns {{ container: any, key: string | number, field: string, evidence: any }[]}
+ */
+function collectEvidenceEntries(result, predicate = () => true) {
+  const entries = []
+
+  for (const key of ['situacionActual', 'demand', 'salary']) {
+    const evidence = /** @type {any} */ (result[key])
+    if (evidence && predicate(evidence)) {
+      entries.push({ container: result, key, field: key, evidence })
+    }
+  }
+
+  for (const field of ['trends', 'geographicDistribution']) {
+    if (Array.isArray(result[field])) {
+      ;/** @type {any[]} */ (result[field]).forEach((evidence, index) => {
+        if (predicate(evidence)) {
+          entries.push({
+            container: result[field],
+            key: index,
+            field,
+            evidence
+          })
+        }
+      })
+    }
+  }
+
+  return entries
+}
+
+/**
+ * Texto en lenguaje natural de lo que esa evidencia concreta
+ * afirma, usado como "CLAIM" para el verificador de contenido.
+ *
+ * @param {string} field
+ * @param {any} evidence
+ * @returns {string}
+ */
+function extractClaimText(field, evidence) {
+  switch (field) {
+    case 'situacionActual':
+      return evidence.summary || ''
+    case 'demand':
+      return `Demanda: ${evidence.level || ''}. ${evidence.explanation || ''}`
+    case 'salary':
+      return `Salario: ${evidence.range || ''} (${evidence.period || ''})`
+    case 'trends':
+      return evidence.statement || ''
+    case 'geographicDistribution':
+      return `${evidence.region || ''}: ${evidence.note || ''}`
+    default:
+      return ''
+  }
+}
+
+const NO_DATA_TEXT = 'No hay datos suficientes para verificar una cifra fiable.'
+
+/**
+ * Cuando el contenido de una fuente CONTRADICE o no respalda en
+ * absoluto una afirmación (verdict 'unsupported'), el texto
+ * original ("22.000 € - 32.000 €") no debe seguir mostrándose
+ * como si fuera un dato de mercado confirmado: se sustituye por
+ * un mensaje explícito de "no verificado" en el mismo campo que
+ * la interfaz ya muestra al usuario. El valor original se
+ * conserva únicamente en `verification.originalClaim`, para
+ * depuración/auditoría, nunca como dato presentado.
+ *
+ * @param {string} field
+ * @returns {Record<string, unknown>}
+ */
+function scrubClaimText(field) {
+  switch (field) {
+    case 'situacionActual':
+      return { summary: NO_DATA_TEXT }
+    case 'demand':
+      return { level: 'sin_datos_suficientes', explanation: NO_DATA_TEXT }
+    case 'salary':
+      return { range: NO_DATA_TEXT, period: 'sin_datos_suficientes' }
+    case 'trends':
+      return { statement: NO_DATA_TEXT }
+    case 'geographicDistribution':
+      return { note: NO_DATA_TEXT }
+    default:
+      return {}
   }
 }
 
@@ -404,28 +520,7 @@ async function verifyUrlReachable(url) {
 async function verifyMarketResultSources(result) {
   const verified = { ...result }
 
-  const citedEvidenceEntries = []
-
-  for (const key of ['situacionActual', 'demand', 'salary']) {
-    const evidence = /** @type {any} */ (verified[key])
-    if (isCitedEvidence(evidence)) {
-      citedEvidenceEntries.push({ container: verified, key, evidence })
-    }
-  }
-
-  for (const key of ['trends', 'geographicDistribution']) {
-    if (Array.isArray(verified[key])) {
-      ;/** @type {any[]} */ (verified[key]).forEach((evidence, index) => {
-        if (isCitedEvidence(evidence)) {
-          citedEvidenceEntries.push({
-            container: verified[key],
-            key: index,
-            evidence
-          })
-        }
-      })
-    }
-  }
+  const citedEvidenceEntries = collectEvidenceEntries(verified, isCitedEvidence)
 
   const urlsToVerify = new Set(
     citedEvidenceEntries.map(entry => entry.evidence.sourceUrl)
@@ -490,10 +585,235 @@ function isCitedEvidence(evidence) {
   )
 }
 
+/*
+ * TERCERA capa de defensa, la más profunda: la segunda capa
+ * (verifyMarketResultSources) solo confirma que la URL EXISTE
+ * (categoría A). Que una página exista no significa que respalde
+ * el dato concreto que se le atribuye (categorías B/C) — es
+ * exactamente el caso real que motivó este módulo: una URL real,
+ * con HTTP 200, que no contenía la cifra de salario citada.
+ *
+ * Para cada evidencia que sigue citada con confianza alta tras la
+ * capa anterior:
+ *
+ *   1. Se descarga su contenido de forma segura y acotada
+ *      (sourceContentService — reutiliza el mismo safeFetch, así
+ *      que la protección SSRF también aplica aquí).
+ *   2. Si no se puede leer el contenido (bloqueado, JS-only,
+ *      timeout, PDF no procesable...), NO se afirma que el dato
+ *      esté respaldado, pero tampoco se trata la URL como falsa:
+ *      se baja un escalón de confianza mantendiendo la fuente.
+ *   3. Si se lee el contenido, se comprueba si respalda realmente
+ *      la afirmación (claimVerificationService): coincidencia
+ *      numérica determinista primero, verificador LLM acotado
+ *      solo si hace falta.
+ *
+ * Cada evidencia termina con un campo `verification` que separa
+ * explícitamente las tres capas (urlValid / contentRetrieved /
+ * claimSupported), tal y como pide la auditoría: nunca se
+ * presenta "la URL existe" como si fuera "el dato está
+ * verificado".
+ */
+
+/**
+ * @param {Record<string, unknown>} result
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function verifyClaimsAgainstContent(result) {
+  const verified = { ...result }
+
+  const allEntries = collectEvidenceEntries(verified)
+
+  // Toda evidencia (incluida la que ya es sin_datos_suficientes o
+  // estimación sin fuente) recibe un objeto `verification`
+  // consistente, para que el frontend/los tests nunca tengan que
+  // distinguir "no tiene el campo" de "no aplica".
+  for (const { container, key, evidence } of allEntries) {
+    container[key] = {
+      ...evidence,
+      verification: {
+        urlValid: false,
+        contentRetrieved: false,
+        claimSupported: null
+      }
+    }
+  }
+
+  const citedEntries = collectEvidenceEntries(verified, isCitedEvidence)
+
+  if (citedEntries.length === 0) {
+    /*
+     * Nada que descargar/verificar, pero dataSufficiency debe
+     * recalcularse igualmente: si el modelo no citó ninguna
+     * fuente con confianza alta para ningún campo, el estado
+     * final casi nunca puede ser "sufficient" aunque el propio
+     * modelo lo propusiera.
+     */
+    verified.dataSufficiency = computeDataSufficiency(verified)
+    return verified
+  }
+
+  const uniqueUrls = Array.from(
+    new Set(citedEntries.map(entry => entry.evidence.sourceUrl))
+  )
+
+  const contentByUrl = new Map()
+
+  await Promise.all(
+    uniqueUrls.map(async url => {
+      contentByUrl.set(url, await fetchSourceContent(url))
+    })
+  )
+
+  await Promise.all(
+    citedEntries.map(async ({ container, key, field, evidence }) => {
+      const content = contentByUrl.get(evidence.sourceUrl)
+
+      if (!content.ok) {
+        // URL válida, contenido no verificable: no se afirma que
+        // el dato esté respaldado, pero tampoco se borra la
+        // fuente (no hay evidencia de que sea falsa).
+        container[key] = {
+          ...evidence,
+          confidence: 'estimacion',
+          verification: {
+            urlValid: true,
+            contentRetrieved: false,
+            claimSupported: null
+          }
+        }
+        return
+      }
+
+      const claimText = extractClaimText(field, evidence)
+      const verdict = await verifyClaim(claimText, content.text)
+
+      if (verdict === 'supported') {
+        container[key] = {
+          ...evidence,
+          verification: {
+            urlValid: true,
+            contentRetrieved: true,
+            claimSupported: true
+          }
+        }
+        return
+      }
+
+      if (verdict === 'unsupported') {
+        // El contenido existe y contradice o no contiene la cifra
+        // citada: es la alucinación de contenido que esta capa
+        // existe para atrapar. El texto presentado se sustituye
+        // por un mensaje explícito de "no verificado" (nunca se
+        // muestra la cifra original como dato confirmado); el
+        // valor original queda solo en verification.originalClaim
+        // para depuración.
+        container[key] = {
+          ...evidence,
+          ...scrubClaimText(field),
+          confidence: 'sin_datos_suficientes',
+          source: '',
+          sourceUrl: '',
+          dataDate: '',
+          verification: {
+            urlValid: true,
+            contentRetrieved: true,
+            claimSupported: false,
+            originalClaim: claimText
+          }
+        }
+        return
+      }
+
+      // insufficient_evidence: el contenido toca el tema pero no
+      // permite confirmar la cifra exacta — se trata como
+      // inferencia, no como dato verificado, pero se conserva la
+      // fuente porque sigue siendo contexto relevante real.
+      container[key] = {
+        ...evidence,
+        confidence: 'estimacion',
+        verification: {
+          urlValid: true,
+          contentRetrieved: true,
+          claimSupported: false
+        }
+      }
+    })
+  )
+
+  verified.dataSufficiency = computeDataSufficiency(verified)
+
+  return verified
+}
+
+/*
+ * `dataSufficiency` lo propone inicialmente el modelo, ANTES de
+ * que exista ninguna verificación real de URL/contenido — es
+ * solo su propia impresión de cómo de bien le ha ido la
+ * búsqueda. No puede ser la última palabra: si, tras verificar,
+ * la mayoría de los campos principales han quedado en estimación
+ * o sin datos, el informe NO puede seguir diciendo "sufficient".
+ *
+ * Se recalcula de forma determinista a partir del estado FINAL
+ * (post-verificación) de los tres campos principales del informe
+ * (situación actual, demanda, salario), que son los que la
+ * interfaz muestra de forma más prominente.
+ */
+
+/**
+ * @param {any} evidence
+ * @returns {'backed' | 'estimate' | 'none'}
+ */
+function classifyEvidenceState(evidence) {
+  if (!evidence || typeof evidence !== 'object') {
+    return 'none'
+  }
+
+  if (
+    evidence.confidence === 'dato_oficial' ||
+    evidence.confidence === 'otra_fuente'
+  ) {
+    return 'backed'
+  }
+
+  if (evidence.confidence === 'estimacion') {
+    return 'estimate'
+  }
+
+  return 'none'
+}
+
+const DATA_SUFFICIENCY_CORE_FIELDS = ['situacionActual', 'demand', 'salary']
+
+/**
+ * @param {Record<string, unknown>} result
+ * @returns {'sufficient' | 'partial' | 'insufficient'}
+ */
+function computeDataSufficiency(result) {
+  const states = DATA_SUFFICIENCY_CORE_FIELDS.map(field =>
+    classifyEvidenceState(/** @type {any} */ (result[field]))
+  )
+
+  const backedCount = states.filter(state => state === 'backed').length
+  const noneCount = states.filter(state => state === 'none').length
+
+  if (noneCount === states.length) {
+    return 'insufficient'
+  }
+
+  if (backedCount >= 2) {
+    return 'sufficient'
+  }
+
+  return 'partial'
+}
+
 module.exports = {
   analyzeMarketForProfile,
   verifyMarketResultSources,
+  verifyClaimsAgainstContent,
   sanitizeMarketResultFormat,
+  computeDataSufficiency,
   MARKET_ANALYSIS_VERSION,
   MARKET_DATA_VERSION
 }

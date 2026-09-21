@@ -10,6 +10,18 @@ const { PDFParse } = require('pdf-parse')
 async function extractTextFromPDF(filePath) {
   const pdfBuffer = fs.readFileSync(filePath)
 
+  return extractTextFromPDFBuffer(pdfBuffer)
+}
+
+/**
+ * Igual que extractTextFromPDF, pero para un PDF que ya está en
+ * memoria (p. ej. descargado de una fuente del Market Analysis),
+ * sin pasar por el sistema de archivos.
+ *
+ * @param {Buffer} pdfBuffer
+ * @returns {Promise<string>}
+ */
+async function extractTextFromPDFBuffer(pdfBuffer) {
   const parser = new PDFParse({
     data: pdfBuffer
   })
@@ -24,5 +36,6 @@ async function extractTextFromPDF(filePath) {
 }
 
 module.exports = {
-  extractTextFromPDF
+  extractTextFromPDF,
+  extractTextFromPDFBuffer
 }

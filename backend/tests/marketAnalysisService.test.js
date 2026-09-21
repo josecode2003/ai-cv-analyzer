@@ -1,3 +1,16 @@
+/*
+ * verifyUrlReachable usa safeFetch (protección SSRF + DNS) en vez
+ * de fetch directamente. Estos tests comprueban el comportamiento
+ * de verifyMarketResultSources ante distintos códigos HTTP, no la
+ * lógica de seguridad en sí (que tiene su propia suite en
+ * urlSafetyService.test.js), así que mockeamos safeFetch para que
+ * delegue directamente en el fetch controlado por cada test, sin
+ * depender de resolución DNS real.
+ */
+jest.mock('../src/services/urlSafetyService', () => ({
+  safeFetch: (url, options) => global.fetch(url, options)
+}))
+
 const {
   verifyMarketResultSources,
   sanitizeMarketResultFormat
