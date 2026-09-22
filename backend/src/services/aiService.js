@@ -23,7 +23,7 @@ const CV_ANALYSIS_MODEL = 'gpt-4.1'
  * generados con la misma versión, para no servir resultados
  * obsoletos tras un cambio de prompt/modelo.
  */
-const CV_ANALYSIS_VERSION = `${CV_ANALYSIS_MODEL}-v2`
+const CV_ANALYSIS_VERSION = `${CV_ANALYSIS_MODEL}-v4`
 
 const cvAnalysisSchema = {
   type: 'object',
@@ -305,7 +305,29 @@ const cvAnalysisSchema = {
 
         profileType: {
           type: 'string',
-          enum: ['single', 'hybrid']
+          enum: ['single', 'hybrid', 'multi']
+        },
+
+        detectedProfiles: {
+          type: 'array',
+          minItems: 1,
+
+          items: {
+            type: 'object',
+            additionalProperties: false,
+
+            properties: {
+              occupation: { type: 'string' },
+              sector: { type: 'string' },
+
+              relevance: {
+                type: 'string',
+                enum: ['primary', 'secondary']
+              }
+            },
+
+            required: ['occupation', 'sector', 'relevance']
+          }
         },
 
         keySkills: {
@@ -334,6 +356,7 @@ const cvAnalysisSchema = {
         'location',
         'region',
         'profileType',
+        'detectedProfiles',
         'keySkills',
         'certifications',
         'languages'
@@ -354,6 +377,83 @@ const cvAnalysisSchema = {
     'overallAssessment',
     'professionalProfile'
   ]
+}
+
+/*
+ * El modelo recibe la fórmula exacta en la regla 50 del prompt,
+ * pero en la práctica no la aplica de forma fiable dentro de la
+ * generación JSON estructurada (se limita a "adivinar" un
+ * `overall` plausible, sin hacer bien la aritmética). Por eso
+ * `overall` NUNCA se confía al modelo: se recalcula siempre de
+ * forma determinista en JavaScript a partir de las cinco
+ * subpuntuaciones que sí son fiables, con estos mismos pesos.
+ */
+const OVERALL_SCORE_WEIGHTS = {
+  experience: 0.25,
+  skills: 0.25,
+  education: 0.15,
+  projects: 0.20,
+  presentation: 0.15
+}
+
+/**
+ * @param {{ experience: number, skills: number, education: number, projects: number, presentation: number }} categoryScores
+ * @returns {number}
+ */
+function computeOverallScore(categoryScores) {
+  const weightedSum = Object.entries(OVERALL_SCORE_WEIGHTS).reduce(
+    (sum, [category, weight]) => sum + categoryScores[category] * weight,
+    0
+  )
+
+  return Math.round(weightedSum)
+}
+
+/*
+ * El schema JSON (aunque sea `strict: true`) no puede expresar
+ * restricciones de consistencia ENTRE campos independientes:
+ * "exactamente una entrada de detectedProfiles con relevance
+ * 'primary'" y "esa entrada debe coincidir textualmente con
+ * occupation/sector top-level" son invariantes de cardinalidad e
+ * igualdad cruzada que json_schema en modo strict no soporta. En
+ * pruebas reales el modelo no siempre las respeta al pie de la
+ * letra (p. ej. deja la entrada "primary" con una redacción
+ * ligeramente distinta al occupation top-level). Igual que con
+ * `score.overall`, no se confía en que el modelo mantenga esta
+ * invariante por sí solo: se normaliza siempre de forma
+ * determinista tras la generación.
+ *
+ * @param {{ occupation: string, sector: string, detectedProfiles: Array<{ occupation: string, sector: string, relevance: string }> }} professionalProfile
+ * @returns {Array<{ occupation: string, sector: string, relevance: string }>}
+ */
+function normalizeDetectedProfiles(professionalProfile) {
+  const { occupation, sector, detectedProfiles } = professionalProfile
+
+  if (!Array.isArray(detectedProfiles) || detectedProfiles.length === 0) {
+    return [{ occupation, sector, relevance: 'primary' }]
+  }
+
+  const matchesTopLevel = profile =>
+    profile.occupation === occupation && profile.sector === sector
+
+  const topLevelMatchIndex = detectedProfiles.findIndex(matchesTopLevel)
+
+  const modelPrimaryIndex = detectedProfiles.findIndex(
+    profile => profile.relevance === 'primary'
+  )
+
+  const primaryIndex =
+    topLevelMatchIndex !== -1
+      ? topLevelMatchIndex
+      : modelPrimaryIndex !== -1
+        ? modelPrimaryIndex
+        : 0
+
+  return detectedProfiles.map((profile, index) =>
+    index === primaryIndex
+      ? { occupation, sector, relevance: 'primary' }
+      : { ...profile, relevance: 'secondary' }
+  )
 }
 
 /**
@@ -379,6 +479,30 @@ async function analyzeCV(cvText) {
      * es la mitigación estándar disponible vía la API).
      */
     temperature: 0,
+
+    /*
+     * La sección "SECTOR-SPECIFIC EVIDENCE OF QUALITY" del prompt
+     * (reglas 42a-42g) traduce en reglas de evaluación accionables
+     * la investigación hecha sobre cómo España evalúa realmente
+     * cada profesión (certificados oficiales, carnés profesionales,
+     * títulos regulados, colegios profesionales) en vez de aplicar
+     * los mismos 5 criterios de "oficina" a cualquier oficio. No se
+     * copian los datos en bruto al prompt (sería frágil y demasiado
+     * largo); solo el principio general más 5-6 ejemplos ilustrativos,
+     * igual que ya hace el prompt con `overallAssessment.level`.
+     * Fuentes consultadas (España, verificadas en esta iteración):
+     * - sepe.es, incual.educacion.gob.es (Catálogo Nacional de
+     *   Cualificaciones Profesionales, certificados de profesionalidad)
+     * - randstadresearch.es, adeccoinstitute.es,
+     *   orientacion-laboral.infojobs.net (carencias reales que
+     *   detectan las empresas por sector)
+     * - todofp.es (familia profesional Sanidad, Emergencias
+     *   Sanitarias), BOE RD 878/2011, enssap.es (TES, socorrismo RFESS)
+     * - certicalia.com, flc.es/tpc, BOE/convenio general de la
+     *   construcción (Carné de Instalador Eléctrico REBT, TPC)
+     * - adecco.com, randstad.es (carnet de carretillero en logística)
+     * - ui1.es, indeed.com (certificaciones Google en marketing digital)
+     */
 
     input: [
       {
@@ -515,6 +639,24 @@ ANALYSIS
 
 42. If a recommendation requires information that the candidate may legitimately have but has not included, clearly frame it as something to add only if applicable.
 
+MULTI-PROFILE CVs: when the professionalProfile section below (rules 56-66) determines profileType "hybrid" or "multi", strengths/weaknesses/recommendations must, WHEN GENUINELY JUSTIFIED by the CV content, explicitly address that multi-dimensional nature — e.g. versatility across domains as a strength, unclear positioning as a weakness if the CV does not clearly distinguish between the different professional dimensions, or a recommendation on whether to lead with one specific profession or present the combination depending on the target role. Never fabricate this angle for a CV that is genuinely single-profile just to seem thorough; only surface it when the evidence in the CV itself supports it, following the same data-integrity rules (1-9) as everything else.
+
+SECTOR-SPECIFIC EVIDENCE OF QUALITY
+
+42a. In the real Spanish labor market, each profession has its OWN recognized signals of quality — an official certification, a regulated professional card ("carné"), a specific vocational qualification, a professional college ("colegio profesional") membership, or a federative license — and these signals are what employers, sector bodies and, where applicable, ministries actually use to judge a candidate, not generic CV wording. Before scoring SKILLS (46), EDUCATION (47) or identifying the main issue (53-54), identify the profession detected from the CV and ask: "what is the REAL, sector-recognized evidence of quality for this specific profession in Spain?" Then apply that specific evidence, instead of defaulting to office/tech-style criteria (e.g. a university degree, a portfolio, generic "certificates") for professions where those are not the real signal. This must be inferred for whatever profession the CV shows, not looked up from a fixed list — the examples below are illustrative, not exhaustive.
+
+42b. Example — software/IT development: the real signals are a concrete, named technology stack (not generic "programming knowledge"), projects with measurable outcomes, up-to-date technical certifications from recognized vendors (e.g. AWS, Azure, Google Cloud), and English proficiency. Penalize buzzwords not backed by evidence of real use. Do NOT penalize a junior candidate for lacking professional experience if they show demonstrable personal or academic projects.
+
+42c. Example — emergency healthcare / lifeguarding (Técnico en Emergencias Sanitarias, Socorrista): the real signal of quality is the official TES qualification (FP Grado Medio, familia Sanidad, homologado por Educación) and, for lifeguards, the carné de socorrista acuático homologado by the Real Federación Española de Salvamento y Socorrismo (RFESS) — not loose "first aid" workshops. Basic/advanced life support (SVB/DEA) training is a valued complement. Do NOT penalize the absence of university studies: the normal path in this field is FP plus federative certification.
+
+42d. Example — electricity/construction trades (electricista and similar): the real signal of quality is the Carné de Instalador Eléctrico Autorizado en Baja Tensión (regulated under the REBT) — without it, an electrician cannot legalize installations or issue boletines, so its presence or absence must weigh far more heavily than CV wording. The Tarjeta Profesional de la Construcción (TPC) and progression through convenio-regulated categories (Peón, Oficial de 2ª, Oficial de 1ª, Encargado) also matter. Do NOT penalize the absence of university or higher vocational studies: the normal path is on-site learning plus these cards/certifications.
+
+42e. Example — logistics/warehouse (reponedor, mozo/a de almacén): the carnet de carretillero is one of the most valued documents in this sector; its absence is a real, worth-mentioning gap, not a minor detail. PDA/WMS handling and at minimum ESO also matter. Do NOT penalize the absence of higher education.
+
+42f. Example — digital marketing: official, named and verifiable platform certifications (e.g. Google Analytics 4, Google Ads) matter; real specialization in one or two tools weighs MORE than accumulating generic certificates or vaguely mentioning "marketing digital" without specifics.
+
+42g. Apply this same reasoning to ANY other profession the CV shows, even if not listed above: identify its real sector-recognized certification, professional card, regulated qualification or professional college, and weigh SKILLS/EDUCATION/CERTIFICATIONS accordingly. Never invent a certification or requirement the CV does not mention — this section changes how you WEIGH evidence already extracted, it never changes the data-integrity rules (1-9): if the CV provides no evidence of any such signal, say so plainly (e.g. as the main issue, rule 53-54) instead of assuming it.
+
 SCORE
 
 43. Evaluate these five categories independently:
@@ -547,6 +689,7 @@ Evaluate:
 - presence of soft skills
 - clarity
 - consistency with the candidate's education and experience
+- presence of the sector-specific certifications, carnés or licenses identified per rules 42a-42g (their genuine presence, backed by CV evidence, should raise this score meaningfully; their clear absence — when the profession normally requires or strongly rewards them — is a real gap, not a neutral detail)
 
 Do not reward skills that are not explicitly supported by the CV.
 
@@ -560,7 +703,7 @@ Evaluate:
 - consistency of dates
 - relevance to the target professional profile
 
-For trades where formal education is not the primary path (e.g. many manual trades learned through apprenticeship or on-the-job experience), do not penalize the candidate for lacking a university-style education if their training/qualifications are appropriate for that trade.
+For trades where formal education is not the primary path (e.g. many manual trades learned through apprenticeship or on-the-job experience), do not penalize the candidate for lacking a university-style education if their training/qualifications are appropriate for that trade. Regulated vocational qualifications and official titles identified per rules 42a-42g (e.g. FP Grado Medio/Superior, certificados de profesionalidad) count fully here, on equal footing with university degrees.
 
 48. PROJECTS SCORE (notable work, in whatever form fits the candidate's profession):
 
@@ -617,6 +760,18 @@ Do not independently choose the overall score.
 Do not artificially increase or decrease the score.
 
 The score represents the quality and competitiveness of the CV, NOT the personal worth or potential of the candidate.
+
+50a. CALIBRATION ANCHORS (apply to EACH of the five category scores in 45-49, not only to the overall): this analysis must be strict and serious, avoiding the score inflation that comes from being encouraging by default. Use these anchors:
+
+- 90-100: exceptional, verifiable evidence for that category; uncommon, reserve for CVs that genuinely stand out.
+- 70-89: solid evidence with at most a minor gap.
+- 50-69: partial evidence, with relevant gaps.
+- 30-49: weak evidence, with important gaps.
+- 0-29: minimal or nonexistent evidence.
+
+50b. Require CONCRETE evidence to score a category high — the mere presence of a section (e.g. an "experience" or "skills" section existing at all) is not by itself evidence of quality; well-written prose with no concrete substance (no dates, no real responsibilities, no verifiable skills, no sector-specific evidence per 42a-42g when applicable) must not be scored as if it were strong. Never reward polished wording over actual substance.
+
+50c. These calibration anchors do not override the existing protections in this prompt: still do not excessively penalize junior/entry-level candidates for lacking years of experience (45), and still do not penalize candidates in trades where formal education is not the primary path, or where a regulated vocational qualification replaces a university degree (47, 42a-42g).
 
 OVERALL ASSESSMENT
 
@@ -694,11 +849,21 @@ PROFESSIONAL PROFILE
 
 62. location / region: the city/area and, if identifiable, the Spanish comunidad autónoma stated in the CV (personalInfo.location). Leave both empty if the CV does not state a location — never guess or invent one.
 
-63. profileType: "hybrid" when the CV clearly spans two or more distinct professional dimensions (e.g. "Marketing + análisis de datos"), otherwise "single".
+63. profileType: counts how many distinct professional dimensions are ACTUALLY EVIDENCED by the CV's content (not merely how many skills it lists):
+   - "single": exactly one professional dimension evidenced (e.g. a CV listing many varied technologies but all in service of one occupation, like a backend developer, is still "single").
+   - "hybrid": exactly two clearly distinct professional dimensions evidenced (e.g. "Marketing + análisis de datos").
+   - "multi": three or more clearly distinct professional dimensions evidenced.
+   Never inflate this count just to reach "hybrid" or "multi" — if the CV is genuinely about a single profession, keep it "single" even if it lists many varied skills or tools.
 
-64. keySkills: the 5-15 most relevant skills (technical or trade-specific) for identifying this candidate's market segment, drawn only from skills.technical/soft already extracted.
+64. detectedProfiles: an array describing every professional dimension counted in profileType, one entry per dimension. Each entry has:
+   - occupation: the specific occupation/trade for that dimension, in Spanish (same style as rule 57).
+   - sector: the economic sector for that dimension (same style as rule 59).
+   - relevance: "primary" for exactly one entry (the candidate's main/leading profession — its occupation and sector must be identical to the top-level occupation/sector fields above), "secondary" for every additional dimension.
+   For profileType "single" this array has exactly one entry (relevance "primary"). For "hybrid" it has exactly two (one primary, one secondary). For "multi" it has three or more (one primary, the rest secondary). Every secondary entry must correspond to a professional dimension genuinely evidenced in the CV's content — never invented merely to inflate the count.
 
-65. certifications / languages: short labels drawn only from the certifications and skills.languages already extracted (do not invent new ones here).
+65. keySkills: the 5-15 most relevant skills (technical or trade-specific) for identifying this candidate's market segment, drawn only from skills.technical/soft already extracted.
+
+66. certifications / languages: short labels drawn only from the certifications and skills.languages already extracted (do not invent new ones here).
 
 Return ONLY the JSON structure requested by the schema.
         `
@@ -729,10 +894,20 @@ ${cvText}
     }
   })
 
-  return JSON.parse(response.output_text)
+  const parsed = JSON.parse(response.output_text)
+
+  parsed.score.overall = computeOverallScore(parsed.score)
+
+  parsed.professionalProfile.detectedProfiles = normalizeDetectedProfiles(
+    parsed.professionalProfile
+  )
+
+  return parsed
 }
 
 module.exports = {
   analyzeCV,
+  computeOverallScore,
+  OVERALL_SCORE_WEIGHTS,
   CV_ANALYSIS_VERSION
 }

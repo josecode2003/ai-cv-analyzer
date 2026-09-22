@@ -86,6 +86,9 @@ const sectorProfiles = [
       location: 'Barcelona',
       region: 'Cataluña',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Desarrolladora Backend', sector: 'Tecnología', relevance: 'primary' }
+      ],
       keySkills: ['Node.js', 'PostgreSQL'],
       certifications: [],
       languages: ['Inglés']
@@ -103,6 +106,9 @@ const sectorProfiles = [
       location: 'Sevilla',
       region: 'Andalucía',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Enfermero de UCI', sector: 'Sanidad', relevance: 'primary' }
+      ],
       keySkills: ['Cuidados críticos', 'RCP avanzada'],
       certifications: ['Soporte vital avanzado'],
       languages: []
@@ -120,6 +126,9 @@ const sectorProfiles = [
       location: 'Palma de Mallorca',
       region: 'Islas Baleares',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Camarero de sala', sector: 'Hostelería', relevance: 'primary' }
+      ],
       keySkills: ['Atención al cliente', 'Coctelería'],
       certifications: ['Manipulador de alimentos'],
       languages: ['Inglés', 'Alemán']
@@ -137,6 +146,9 @@ const sectorProfiles = [
       location: 'Zaragoza',
       region: 'Aragón',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Auxiliar administrativo', sector: 'Administración', relevance: 'primary' }
+      ],
       keySkills: ['Ofimática', 'Atención telefónica'],
       certifications: [],
       languages: []
@@ -154,6 +166,9 @@ const sectorProfiles = [
       location: 'Guadalajara',
       region: 'Castilla-La Mancha',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Mozo/a de almacén', sector: 'Logística', relevance: 'primary' }
+      ],
       keySkills: ['Carretilla elevadora', 'Gestión de inventario'],
       certifications: ['Carnet de carretillero'],
       languages: []
@@ -171,6 +186,9 @@ const sectorProfiles = [
       location: 'Vigo',
       region: 'Galicia',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: 'Operario/a de producción industrial', sector: 'Industria', relevance: 'primary' }
+      ],
       keySkills: ['Manejo de maquinaria', 'Control de calidad'],
       certifications: ['PRL 20h'],
       languages: []
@@ -217,6 +235,10 @@ describe('Detección de perfil profesional por sector', () => {
       location: 'Madrid',
       region: 'Comunidad de Madrid',
       profileType: 'hybrid',
+      detectedProfiles: [
+        { occupation: 'Especialista en Marketing y análisis de datos', sector: 'Marketing', relevance: 'primary' },
+        { occupation: 'Analista de datos', sector: 'Tecnología', relevance: 'secondary' }
+      ],
       keySkills: ['SQL', 'Google Analytics', 'Campañas digitales'],
       certifications: [],
       languages: []
@@ -235,6 +257,47 @@ describe('Detección de perfil profesional por sector', () => {
     expect(response.body.analysis.professionalProfile.profileType).toBe(
       'hybrid'
     )
+    expect(response.body.analysis.professionalProfile.detectedProfiles).toHaveLength(2)
+  })
+
+  test('debe soportar un perfil multi (3+ profesiones) sin forzarlo a hybrid', async () => {
+    const multiProfile = {
+      occupation: 'Formador/a y coordinador/a de eventos con soporte técnico audiovisual',
+      relatedOccupations: ['Técnico de sonido', 'Gestor de proyectos culturales'],
+      sector: 'Educación',
+      subsector: 'Formación de adultos',
+      seniority: 'Mid-level',
+      experienceYears: 6,
+      location: 'Valencia',
+      region: 'Comunidad Valenciana',
+      profileType: 'multi',
+      detectedProfiles: [
+        { occupation: 'Formador/a de adultos', sector: 'Educación', relevance: 'primary' },
+        { occupation: 'Coordinador/a de eventos', sector: 'Eventos', relevance: 'secondary' },
+        { occupation: 'Técnico de sonido', sector: 'Audiovisual', relevance: 'secondary' }
+      ],
+      keySkills: ['Diseño instruccional', 'Gestión de proveedores', 'Mezcla de sonido en directo'],
+      certifications: [],
+      languages: []
+    }
+
+    mockAnalyzeCV.mockResolvedValue(analysisFor(multiProfile))
+
+    const response = await session.agent
+      .post('/api/cv')
+      .attach('cv', Buffer.from('%PDF-1.4 CV multi'), {
+        filename: 'cv-multi.pdf',
+        contentType: 'application/pdf'
+      })
+
+    expect(response.statusCode).toBe(201)
+    expect(response.body.analysis.professionalProfile.profileType).toBe('multi')
+    expect(response.body.analysis.professionalProfile.detectedProfiles).toHaveLength(3)
+    expect(
+      response.body.analysis.professionalProfile.detectedProfiles.filter(
+        p => p.relevance === 'primary'
+      )
+    ).toHaveLength(1)
   })
 
   test('debe aceptar un CV sin profesión ni ubicación claras sin inventar datos', async () => {
@@ -248,6 +311,9 @@ describe('Detección de perfil profesional por sector', () => {
       location: '',
       region: '',
       profileType: 'single',
+      detectedProfiles: [
+        { occupation: '', sector: '', relevance: 'primary' }
+      ],
       keySkills: [],
       certifications: [],
       languages: []
