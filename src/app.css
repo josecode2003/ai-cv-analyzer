@@ -1507,17 +1507,24 @@ button:disabled {
 .score-meter-track {
   height: 8px;
 
-  border-radius: 20px;
+  border-radius: 4px;
 
   background: #eef0f4;
 
   overflow: hidden;
 }
 
+/*
+ * Cuadrado en la base (izquierda), redondeado solo en el extremo
+ * del dato (derecha) — spec de la skill dataviz para marcas de
+ * tipo barra ("4px rounded data-end, square at the baseline"),
+ * en vez de una píldora redondeada en ambos extremos.
+ */
+
 .score-meter-fill {
   height: 100%;
 
-  border-radius: 20px;
+  border-radius: 0 4px 4px 0;
 
   transition: width 0.6s ease;
 }
@@ -1525,6 +1532,15 @@ button:disabled {
 /* =========================================================
    SCORE COLORS
    ========================================================= */
+
+/*
+ * Ámbar y rojo eran perceptualmente casi idénticos (validados con
+ * el validador de paleta de la skill dataviz: ΔE 9.1 en visión
+ * normal, por debajo del umbral de 15 — "Mejorable" y "Bajo" no se
+ * distinguían de un vistazo). Los cuatro tonos actuales pasan las
+ * cuatro comprobaciones (banda de luminosidad, separación CVD,
+ * suelo de visión normal y contraste) en modo claro.
+ */
 
 .score-excellent {
   color: #15803d !important;
@@ -1535,11 +1551,11 @@ button:disabled {
 }
 
 .score-medium {
-  color: #b45309 !important;
+  color: #a15c00 !important;
 }
 
 .score-low {
-  color: #b91c1c !important;
+  color: #9f1239 !important;
 }
 
 .score-meter-fill.score-excellent {
@@ -1551,11 +1567,34 @@ button:disabled {
 }
 
 .score-meter-fill.score-medium {
-  background: #b45309;
+  background: #a15c00;
 }
 
 .score-meter-fill.score-low {
-  background: #b91c1c;
+  background: #9f1239;
+}
+
+/*
+ * El track (parte sin rellenar) es un escalón más claro del mismo
+ * tono que su relleno, no un gris neutro — así el estado se lee en
+ * toda la barra, no solo en la parte rellena (spec "Meter" de la
+ * skill dataviz).
+ */
+
+.score-meter-track.score-excellent {
+  background: color-mix(in srgb, #15803d 14%, #eef0f4);
+}
+
+.score-meter-track.score-good {
+  background: color-mix(in srgb, #3155a6 14%, #eef0f4);
+}
+
+.score-meter-track.score-medium {
+  background: color-mix(in srgb, #a15c00 14%, #eef0f4);
+}
+
+.score-meter-track.score-low {
+  background: color-mix(in srgb, #9f1239 14%, #eef0f4);
 }
 
 /* =========================================================
@@ -1582,8 +1621,30 @@ button:disabled {
   transform: rotate(-90deg);
 }
 
+/*
+ * Igual que en el meter lineal: el track sin rellenar es un
+ * escalón claro del mismo tono que el arco de valor, no un gris
+ * neutro, para que el estado se lea en todo el aro.
+ */
+
 .score-gauge-track {
   stroke: #e5e7eb;
+}
+
+.score-gauge.score-excellent .score-gauge-track {
+  stroke: color-mix(in srgb, #15803d 14%, #e5e7eb);
+}
+
+.score-gauge.score-good .score-gauge-track {
+  stroke: color-mix(in srgb, #3155a6 14%, #e5e7eb);
+}
+
+.score-gauge.score-medium .score-gauge-track {
+  stroke: color-mix(in srgb, #a15c00 14%, #e5e7eb);
+}
+
+.score-gauge.score-low .score-gauge-track {
+  stroke: color-mix(in srgb, #9f1239 14%, #e5e7eb);
 }
 
 .score-gauge-value {

@@ -29,6 +29,7 @@ const clampedScore = computed(() => Math.min(100, Math.max(0, props.score)))
 
     <div
       class="score-meter-track"
+      :class="getScoreClass(clampedScore)"
       role="progressbar"
       :aria-label="label"
       :aria-valuenow="clampedScore"

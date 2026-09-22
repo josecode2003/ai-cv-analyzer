@@ -23,6 +23,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Skills instaladas con `npx skills add` (contenido de terceros,
+# reproducible desde skills-lock.json — no forma parte del proyecto)
+.agents/
+.claude/skills/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
