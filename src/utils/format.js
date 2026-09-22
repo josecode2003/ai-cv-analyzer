@@ -14,6 +14,24 @@ export function getScoreClass(score) {
   return 'score-low'
 }
 
+/* Etiqueta textual redundante al color, para no depender solo del color
+   (accesibilidad) al comunicar el nivel de una puntuación. */
+export function getScoreLabel(score) {
+  if (score >= 80) {
+    return 'Excelente'
+  }
+
+  if (score >= 60) {
+    return 'Bueno'
+  }
+
+  if (score >= 40) {
+    return 'Mejorable'
+  }
+
+  return 'Bajo'
+}
+
 export function getPriorityClass(priority) {
   if (priority === 'high') {
     return 'priority-high'

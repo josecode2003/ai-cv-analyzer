@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 
 import MarketEvidence from './MarketEvidence.vue'
+import AppIcon from '@/components/icons/AppIcon.vue'
 import { getMarketAnalysis } from '@/services/marketService'
 import { formatDate } from '@/utils/format'
 
@@ -79,7 +80,10 @@ const dataSufficiencyText = {
 
 <template>
   <div class="analysis-section market-analysis-section">
-    <h3>📊 Situación del mercado laboral</h3>
+    <div class="section-heading">
+      <span class="section-icon"><AppIcon name="bar-chart" /></span>
+      <h3>Situación del mercado laboral</h3>
+    </div>
 
     <p class="market-disclaimer">
       Basado en fuentes públicas y verificables (SEPE, INE, Ministerio de

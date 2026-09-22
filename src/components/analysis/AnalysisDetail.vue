@@ -2,11 +2,10 @@
 import { computed } from 'vue'
 
 import MarketAnalysis from './MarketAnalysis.vue'
-import {
-  getScoreClass,
-  getPriorityClass,
-  getPriorityText
-} from '@/utils/format'
+import ScoreGauge from './ScoreGauge.vue'
+import ScoreMeter from './ScoreMeter.vue'
+import AppIcon from '@/components/icons/AppIcon.vue'
+import { getPriorityClass, getPriorityText } from '@/utils/format'
 
 const props = defineProps({
   analysis: {
@@ -28,6 +27,89 @@ const emit = defineEmits(['back', 'compare', 'analyze-another'])
 const overallScore = computed(() => {
   return props.analysis?.score?.overall ?? 0
 })
+
+const scoreBreakdown = computed(() => [
+  {
+    key: 'experience',
+    label: 'Experiencia',
+    score: props.analysis?.score?.experience ?? 0
+  },
+  { key: 'skills', label: 'Skills', score: props.analysis?.score?.skills ?? 0 },
+  {
+    key: 'education',
+    label: 'Educación',
+    score: props.analysis?.score?.education ?? 0
+  },
+  {
+    key: 'projects',
+    label: 'Logros',
+    score: props.analysis?.score?.projects ?? 0
+  },
+  {
+    key: 'presentation',
+    label: 'Presentación',
+    score: props.analysis?.score?.presentation ?? 0
+  }
+])
+
+/* =========================================================
+   PERFIL PROFESIONAL DETECTADO
+   ========================================================= */
+
+// `detectedProfiles` es nuevo en el backend. Los análisis antiguos guardados
+// solo tienen `occupation`/`sector` sueltos: se normalizan aquí a la misma
+// forma para no tener que ramificar el resto del componente por versión de dato.
+const profileEntries = computed(() => {
+  const profile = props.analysis?.professionalProfile
+
+  if (!profile) {
+    return []
+  }
+
+  if (profile.detectedProfiles?.length) {
+    return profile.detectedProfiles
+  }
+
+  if (profile.occupation) {
+    return [
+      {
+        occupation: profile.occupation,
+        sector: profile.sector,
+        relevance: 'primary'
+      }
+    ]
+  }
+
+  return []
+})
+
+const profileType = computed(() => {
+  const explicitType = props.analysis?.professionalProfile?.profileType
+
+  if (explicitType) {
+    return explicitType
+  }
+
+  if (profileEntries.value.length >= 3) {
+    return 'multi'
+  }
+
+  if (profileEntries.value.length === 2) {
+    return 'hybrid'
+  }
+
+  return 'single'
+})
+
+const primaryProfile = computed(
+  () =>
+    profileEntries.value.find(entry => entry.relevance === 'primary') ||
+    profileEntries.value[0]
+)
+
+const secondaryProfiles = computed(() =>
+  profileEntries.value.filter(entry => entry !== primaryProfile.value)
+)
 
 /* =========================================================
    ACCIONES
@@ -66,13 +148,9 @@ function analyzeAnother() {
       </div>
 
       <div class="score-card">
-        <span class="score-label"> CV Score </span>
+        <span class="score-label"> Puntuación global </span>
 
-        <strong :class="getScoreClass(overallScore)">
-          {{ overallScore }}
-        </strong>
-
-        <span> /100 </span>
+        <ScoreGauge :score="overallScore" />
       </div>
     </div>
 
@@ -121,46 +199,13 @@ function analyzeAnother() {
      PUNTUACIONES
      ===================================================== -->
 
-    <div class="score-grid">
-      <div class="score-item">
-        <span> Experiencia </span>
-
-        <strong :class="getScoreClass(analysis.score?.experience ?? 0)">
-          {{ analysis.score?.experience ?? 0 }}
-        </strong>
-      </div>
-
-      <div class="score-item">
-        <span> Skills </span>
-
-        <strong :class="getScoreClass(analysis.score?.skills ?? 0)">
-          {{ analysis.score?.skills ?? 0 }}
-        </strong>
-      </div>
-
-      <div class="score-item">
-        <span> Educación </span>
-
-        <strong :class="getScoreClass(analysis.score?.education ?? 0)">
-          {{ analysis.score?.education ?? 0 }}
-        </strong>
-      </div>
-
-      <div class="score-item">
-        <span> Logros </span>
-
-        <strong :class="getScoreClass(analysis.score?.projects ?? 0)">
-          {{ analysis.score?.projects ?? 0 }}
-        </strong>
-      </div>
-
-      <div class="score-item">
-        <span> Presentación </span>
-
-        <strong :class="getScoreClass(analysis.score?.presentation ?? 0)">
-          {{ analysis.score?.presentation ?? 0 }}
-        </strong>
-      </div>
+    <div class="score-meters">
+      <ScoreMeter
+        v-for="item in scoreBreakdown"
+        :key="item.key"
+        :label="item.label"
+        :score="item.score"
+      />
     </div>
 
     <!-- =====================================================
@@ -168,7 +213,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div class="analysis-section">
-      <h3>👤 Información personal</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="user" /></span>
+        <h3>Información personal</h3>
+      </div>
 
       <div class="info-grid">
         <div>
@@ -226,7 +274,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div class="analysis-section">
-      <h3>💼 Experiencia profesional</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="briefcase" /></span>
+        <h3>Experiencia profesional</h3>
+      </div>
 
       <div v-if="analysis.experience?.length" class="timeline">
         <div
@@ -259,9 +310,9 @@ function analyzeAnother() {
         </div>
       </div>
 
-      <p v-else class="empty-text">
-        No se ha encontrado experiencia profesional.
-      </p>
+      <div v-else class="empty-block">
+        <p>No se ha encontrado experiencia profesional en este CV.</p>
+      </div>
     </div>
 
     <!-- =====================================================
@@ -269,7 +320,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div class="analysis-section">
-      <h3>🎓 Formación</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="graduation-cap" /></span>
+        <h3>Formación</h3>
+      </div>
 
       <div v-if="analysis.education?.length" class="education-list">
         <div
@@ -298,7 +352,9 @@ function analyzeAnother() {
         </div>
       </div>
 
-      <p v-else class="empty-text">No se ha encontrado formación.</p>
+      <div v-else class="empty-block">
+        <p>No se ha encontrado formación en este CV.</p>
+      </div>
     </div>
 
     <!-- =====================================================
@@ -306,7 +362,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div class="analysis-section">
-      <h3>🛠️ Habilidades</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="tool" /></span>
+        <h3>Habilidades</h3>
+      </div>
 
       <div class="skill-group">
         <h4>Habilidades técnicas</h4>
@@ -366,7 +425,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div class="analysis-section">
-      <h3>🏆 Logros y trabajos destacados</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="trophy" /></span>
+        <h3>Logros y trabajos destacados</h3>
+      </div>
 
       <div v-if="analysis.projects?.length" class="projects-grid">
         <div
@@ -409,7 +471,10 @@ function analyzeAnother() {
      ===================================================== -->
 
     <div v-if="analysis.certifications?.length" class="analysis-section">
-      <h3>📜 Formación complementaria</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="award" /></span>
+        <h3>Formación complementaria</h3>
+      </div>
 
       <div class="certifications-list">
         <div
@@ -440,13 +505,14 @@ function analyzeAnother() {
      PERFIL PROFESIONAL DETECTADO
      ===================================================== -->
 
-    <div
-      v-if="analysis.professionalProfile?.occupation"
-      class="analysis-section"
-    >
-      <h3>🧭 Perfil profesional detectado</h3>
+    <div v-if="profileEntries.length" class="analysis-section">
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="compass" /></span>
+        <h3>Perfil profesional detectado</h3>
+      </div>
 
-      <div class="info-grid">
+      <!-- PERFIL ÚNICO (o datos antiguos sin detectedProfiles) -->
+      <div v-if="profileType === 'single'" class="info-grid">
         <div>
           <span>Ocupación</span>
           <strong>{{ analysis.professionalProfile.occupation }}</strong>
@@ -457,6 +523,78 @@ function analyzeAnother() {
           <strong>{{ analysis.professionalProfile.sector }}</strong>
         </div>
 
+        <div v-if="analysis.professionalProfile.subsector">
+          <span>Subsector</span>
+          <strong>{{ analysis.professionalProfile.subsector }}</strong>
+        </div>
+
+        <div v-if="analysis.professionalProfile.seniority">
+          <span>Senioridad</span>
+          <strong>{{ analysis.professionalProfile.seniority }}</strong>
+        </div>
+
+        <div v-if="analysis.professionalProfile.location">
+          <span>Ubicación</span>
+          <strong>{{ analysis.professionalProfile.location }}</strong>
+        </div>
+      </div>
+
+      <!-- PERFIL HÍBRIDO: dos ocupaciones, principal y secundaria -->
+      <template v-else-if="profileType === 'hybrid'">
+        <span class="profile-type-badge hybrid">Perfil híbrido</span>
+
+        <div class="profile-dual">
+          <div class="profile-card primary">
+            <span class="profile-card-tag">Perfil principal</span>
+            <strong>{{ primaryProfile?.occupation }}</strong>
+            <span v-if="primaryProfile?.sector" class="profile-card-sector">
+              {{ primaryProfile.sector }}
+            </span>
+          </div>
+
+          <div class="profile-card secondary">
+            <span class="profile-card-tag">Perfil secundario</span>
+            <strong>{{ secondaryProfiles[0]?.occupation }}</strong>
+            <span
+              v-if="secondaryProfiles[0]?.sector"
+              class="profile-card-sector"
+            >
+              {{ secondaryProfiles[0].sector }}
+            </span>
+          </div>
+        </div>
+      </template>
+
+      <!-- PERFIL MULTIDISCIPLINAR: principal destacado + resto en lista -->
+      <template v-else>
+        <span class="profile-type-badge multi">Perfil multidisciplinar</span>
+
+        <div class="profile-list">
+          <div class="profile-card primary">
+            <span class="profile-card-tag">Perfil principal</span>
+            <strong>{{ primaryProfile?.occupation }}</strong>
+            <span v-if="primaryProfile?.sector" class="profile-card-sector">
+              {{ primaryProfile.sector }}
+            </span>
+          </div>
+
+          <div
+            v-for="(profile, index) in secondaryProfiles"
+            :key="`${profile.occupation}-${index}`"
+            class="profile-list-item"
+          >
+            <strong>{{ profile.occupation }}</strong>
+            <span v-if="profile.sector">{{ profile.sector }}</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- Datos compartidos del perfil, independientes de cuántas
+           ocupaciones se hayan detectado -->
+      <div
+        v-if="profileType !== 'single'"
+        class="info-grid profile-common-info"
+      >
         <div v-if="analysis.professionalProfile.subsector">
           <span>Subsector</span>
           <strong>{{ analysis.professionalProfile.subsector }}</strong>
@@ -495,10 +633,7 @@ function analyzeAnother() {
      MERCADO LABORAL EN ESPAÑA
      ===================================================== -->
 
-    <MarketAnalysis
-      v-if="analysis.professionalProfile?.occupation"
-      :cv-id="cvId"
-    />
+    <MarketAnalysis v-if="profileEntries.length" :cv-id="cvId" />
 
     <!-- =====================================================
      FORTALEZAS / DEBILIDADES
@@ -506,9 +641,12 @@ function analyzeAnother() {
 
     <div v-if="analysis.analysis" class="insights-grid">
       <div class="insight-card strengths">
-        <div class="insight-icon">💪</div>
-
-        <h3>Fortalezas</h3>
+        <div class="section-heading">
+          <span class="section-icon strengths"
+            ><AppIcon name="thumbs-up"
+          /></span>
+          <h3>Fortalezas</h3>
+        </div>
 
         <ul>
           <li
@@ -525,9 +663,12 @@ function analyzeAnother() {
       </div>
 
       <div class="insight-card weaknesses">
-        <div class="insight-icon">⚠️</div>
-
-        <h3>Aspectos a mejorar</h3>
+        <div class="section-heading">
+          <span class="section-icon weaknesses"
+            ><AppIcon name="alert-triangle"
+          /></span>
+          <h3>Aspectos a mejorar</h3>
+        </div>
 
         <ul>
           <li
@@ -552,7 +693,10 @@ function analyzeAnother() {
       v-if="analysis.analysis?.recommendations?.length"
       class="analysis-section recommendation-section"
     >
-      <h3>🚀 Recomendaciones</h3>
+      <div class="section-heading">
+        <span class="section-icon"><AppIcon name="rocket" /></span>
+        <h3>Recomendaciones</h3>
+      </div>
 
       <div class="recommendation-list">
         <div
