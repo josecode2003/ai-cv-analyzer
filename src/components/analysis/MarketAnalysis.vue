@@ -1,10 +1,9 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
-import MarketEvidence from './MarketEvidence.vue'
 import AppIcon from '@/components/icons/AppIcon.vue'
 import { getMarketAnalysis } from '@/services/marketService'
-import { formatDate } from '@/utils/format'
+import { formatShortDate, getDemandMeta } from '@/utils/format'
 
 const props = defineProps({
   cvId: {
@@ -14,32 +13,11 @@ const props = defineProps({
 })
 
 const status = ref('loading')
-const loadingMessage = ref('Identificando tu perfil profesional...')
 const unavailableMessage = ref('')
 const market = ref(null)
-const generatedAt = ref(null)
-
-const LOADING_MESSAGES = [
-  'Identificando tu perfil profesional...',
-  'Analizando el mercado laboral de tu sector en España...',
-  'Preparando tu informe...'
-]
-
-let loadingInterval = null
-
-function cycleLoadingMessages() {
-  let index = 0
-
-  loadingInterval = setInterval(() => {
-    index = (index + 1) % LOADING_MESSAGES.length
-    loadingMessage.value = LOADING_MESSAGES[index]
-  }, 2200)
-}
 
 async function loadMarketAnalysis() {
   status.value = 'loading'
-  loadingMessage.value = LOADING_MESSAGES[0]
-  cycleLoadingMessages()
 
   try {
     const response = await getMarketAnalysis(props.cvId)
@@ -53,226 +31,341 @@ async function loadMarketAnalysis() {
     }
 
     market.value = response.marketAnalysis
-    generatedAt.value = response.generatedAt
     status.value = 'ready'
   } catch (fetchError) {
     console.error('Error obteniendo el análisis de mercado:', fetchError)
     status.value = 'error'
-  } finally {
-    clearInterval(loadingInterval)
   }
 }
 
 onMounted(loadMarketAnalysis)
-
-onUnmounted(() => {
-  clearInterval(loadingInterval)
-})
-
-const dataSufficiencyText = {
-  sufficient: 'Se han encontrado datos actuales suficientes para este perfil.',
-  partial:
-    'Solo se han encontrado datos parciales para este perfil: algunos indicadores pueden no estar disponibles.',
-  insufficient:
-    'No se han encontrado datos fiables suficientes para este perfil profesional en este momento.'
-}
 </script>
 
 <template>
   <div class="analysis-section market-analysis-section">
     <div class="section-heading">
       <span class="section-icon"><AppIcon name="bar-chart" /></span>
-      <h3>Situación del mercado laboral</h3>
+      <h3>Mercado laboral en España</h3>
     </div>
 
-    <p class="market-disclaimer">
-      Basado en fuentes públicas y verificables (SEPE, INE, Ministerio de
-      Trabajo, EURES, Eurostat, observatorios de empleo e informes laborales
-      reconocidos), no en el conocimiento general del modelo de IA.
-    </p>
-
-    <div v-if="status === 'loading'" class="loading-state market-loading">
-      <div class="loading-spinner"></div>
-      <p>{{ loadingMessage }}</p>
+    <div v-if="status === 'loading'" class="market-skeleton" aria-hidden="true">
+      <div class="skeleton" style="height: 22px; width: 60%"></div>
+      <div class="skeleton" style="height: 14px; width: 100%"></div>
+      <div class="skeleton" style="height: 14px; width: 90%"></div>
+      <div
+        class="skeleton"
+        style="height: 90px; width: 100%; margin-top: 8px"
+      ></div>
     </div>
 
-    <div v-else-if="status === 'error'" class="error-message">
+    <p v-else-if="status === 'error'" class="error-message" role="alert">
       No se pudo cargar el análisis de mercado laboral.
 
       <button type="button" class="retry-link" @click="loadMarketAnalysis">
         Reintentar
       </button>
-    </div>
+    </p>
 
-    <div
-      v-else-if="status === 'unavailable'"
-      class="empty-text market-unavailable"
-    >
+    <p v-else-if="status === 'unavailable'" class="empty-text">
       {{ unavailableMessage }}
-    </div>
+    </p>
 
     <div v-else-if="market" class="market-report">
-      <p class="data-sufficiency-note">
-        {{
-          dataSufficiencyText[market.dataSufficiency] ||
-          dataSufficiencyText.insufficient
-        }}
-      </p>
+      <!-- SITUACIÓN GENERAL -->
+      <div v-if="market.general" class="market-block general-block">
+        <h4>{{ market.general.headline || 'Situación general' }}</h4>
+        <p>{{ market.general.summary }}</p>
 
-      <!-- SITUACIÓN ACTUAL -->
-      <div class="market-block">
-        <h4>Situación actual</h4>
-        <p>
-          {{
-            market.situacionActual?.summary ||
-            'No hay datos suficientes para estimar este indicador.'
-          }}
-        </p>
-        <MarketEvidence v-bind="market.situacionActual" />
-      </div>
-
-      <!-- DEMANDA -->
-      <div class="market-header">
-        <div>
-          <span>Demanda</span>
-          <strong>{{
-            market.demand?.explanation ||
-            'No hay datos suficientes para estimar este indicador.'
-          }}</strong>
-        </div>
-
-        <div class="demand-badge" :class="`demand-${market.demand?.level}`">
-          {{
-            market.demand?.level === 'sin_datos_suficientes' ||
-            !market.demand?.level
-              ? 'Sin datos suficientes'
-              : `Demanda ${market.demand.level}`
-          }}
-        </div>
-      </div>
-      <MarketEvidence v-bind="market.demand" />
-
-      <!-- SALARIO -->
-      <div class="market-block">
-        <h4>Rango salarial</h4>
-        <p>
-          {{
-            market.salary?.range ||
-            'No hay datos suficientes para estimar este indicador.'
-          }}
-          <template
-            v-if="
-              market.salary?.range &&
-              market.salary?.period &&
-              market.salary.period !== 'sin_datos_suficientes'
-            "
-          >
-            ({{ market.salary.period }})
-          </template>
-        </p>
-        <MarketEvidence v-bind="market.salary" />
-      </div>
-
-      <!-- TENDENCIAS -->
-      <div v-if="market.trends?.length" class="market-block">
-        <h4>Tendencias</h4>
-
-        <div
-          v-for="(trend, index) in market.trends"
-          :key="index"
-          class="market-item"
-        >
-          <p>{{ trend.statement }}</p>
-          <MarketEvidence v-bind="trend" />
-        </div>
-      </div>
-
-      <!-- SECTORES / PUESTOS / COMPETENCIAS -->
-      <div v-if="market.sectorsHiring?.length" class="skill-group">
-        <h4>Sectores que más contratan</h4>
-        <div class="tag-list">
-          <span
-            v-for="item in market.sectorsHiring"
-            :key="item"
-            class="skill-tag"
-            >{{ item }}</span
-          >
-        </div>
-      </div>
-
-      <div v-if="market.relatedRoles?.length" class="skill-group">
-        <h4>Puestos relacionados</h4>
-        <div class="tag-list">
-          <span
-            v-for="item in market.relatedRoles"
-            :key="item"
-            class="skill-tag"
-            >{{ item }}</span
-          >
-        </div>
-      </div>
-
-      <div v-if="market.skillsInDemand?.length" class="skill-group">
-        <h4>Competencias más demandadas</h4>
-        <div class="tag-list">
-          <span
-            v-for="item in market.skillsInDemand"
-            :key="item"
-            class="skill-tag soft"
-            >{{ item }}</span
-          >
-        </div>
-      </div>
-
-      <!-- DISTRIBUCIÓN GEOGRÁFICA -->
-      <div v-if="market.geographicDistribution?.length" class="market-block">
-        <h4>Distribución geográfica</h4>
-
-        <div
-          v-for="(region, index) in market.geographicDistribution"
-          :key="index"
-          class="market-item"
-        >
-          <p>
-            <strong>{{ region.region }}</strong> — {{ region.note }}
-          </p>
-          <MarketEvidence v-bind="region" />
-        </div>
-      </div>
-
-      <!-- RECOMENDACIONES -->
-      <div v-if="market.recommendations?.length" class="skill-group">
-        <h4>Recomendaciones para este mercado</h4>
-
-        <div class="recommendation-list">
+        <div v-if="market.general.keyFigures?.length" class="key-figures">
           <div
-            v-for="(tip, index) in market.recommendations"
+            v-for="(figure, index) in market.general.keyFigures"
             :key="index"
-            class="recommendation-item"
+            class="key-figure"
           >
-            <span>{{ index + 1 }}</span>
-            <p>{{ tip }}</p>
+            <strong>{{ figure.value }}</strong>
+            <span>{{ figure.label }}</span>
+            <small v-if="figure.period">{{ figure.period }}</small>
+          </div>
+        </div>
+
+        <ul v-if="market.general.highlights?.length" class="highlights-list">
+          <li
+            v-for="(highlight, index) in market.general.highlights"
+            :key="index"
+          >
+            {{ highlight }}
+          </li>
+        </ul>
+
+        <p v-if="market.general.updatedAt" class="market-updated-at">
+          Datos generales actualizados:
+          {{ formatShortDate(market.general.updatedAt) }}
+        </p>
+      </div>
+
+      <!-- NOTICIA -->
+      <a
+        v-if="market.general?.news"
+        class="news-card"
+        :href="market.general.news.url"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <span class="news-icon"><AppIcon name="newspaper" /></span>
+
+        <div class="news-body">
+          <span class="news-label">Última noticia</span>
+          <strong>{{ market.general.news.title }}</strong>
+          <span class="news-meta">
+            {{ market.general.news.publisher }}
+            <template v-if="market.general.news.publishedAt">
+              · {{ formatShortDate(market.general.news.publishedAt) }}
+            </template>
+          </span>
+        </div>
+
+        <AppIcon name="external-link" class="news-external" />
+      </a>
+
+      <!-- PROFESIÓN -->
+      <div v-if="market.profession" class="market-block profession-block">
+        <div class="profession-head">
+          <h4>Demanda para {{ market.profession.occupation }}</h4>
+
+          <span
+            class="demand-badge"
+            :class="getDemandMeta(market.profession.demandLevel).className"
+          >
+            <AppIcon
+              :name="getDemandMeta(market.profession.demandLevel).icon"
+            />
+            {{ getDemandMeta(market.profession.demandLevel).label }}
+          </span>
+        </div>
+
+        <p v-if="market.profession.note">{{ market.profession.note }}</p>
+
+        <div
+          v-if="market.profession.skillsInDemand?.length"
+          class="skill-group"
+        >
+          <h4>Competencias más demandadas</h4>
+
+          <div class="tag-list">
+            <span
+              v-for="skill in market.profession.skillsInDemand"
+              :key="skill"
+              class="skill-tag soft"
+            >
+              {{ skill }}
+            </span>
           </div>
         </div>
       </div>
 
-      <!-- FUENTES -->
-      <div v-if="market.sourcesUsed?.length" class="market-sources">
-        <h4>Fuentes consultadas</h4>
-
-        <ul>
-          <li v-for="(source, index) in market.sourcesUsed" :key="index">
-            <a :href="source.url" target="_blank" rel="noopener noreferrer">
-              {{ source.title }}
-            </a>
-            — {{ source.publisher }} ({{ source.date }})
-          </li>
-        </ul>
-      </div>
-
-      <p v-if="generatedAt" class="market-generated-at">
-        Informe generado: {{ formatDate(generatedAt) }}
+      <p v-if="!market.general && !market.profession" class="empty-text">
+        No hay datos de mercado disponibles para este perfil en este momento.
       </p>
     </div>
   </div>
 </template>
+
+<style scoped>
+.market-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.market-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.market-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.market-block h4 {
+  font-size: 1rem;
+}
+
+.market-block p {
+  color: var(--color-text-secondary);
+  font-size: 0.92rem;
+}
+
+.key-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.key-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+}
+
+.key-figure strong {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--accent-strong);
+}
+
+.key-figure span {
+  font-size: 0.82rem;
+}
+
+.key-figure small {
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+}
+
+.highlights-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.highlights-list li {
+  position: relative;
+  padding-left: var(--space-4);
+  font-size: 0.88rem;
+  color: var(--color-text-secondary);
+}
+
+.highlights-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.5em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.market-updated-at {
+  font-size: 0.76rem;
+  color: var(--color-text-tertiary);
+}
+
+.news-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .news-card:hover {
+    border-color: var(--accent-border);
+    transform: translateY(-1px);
+  }
+}
+
+.news-icon {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.news-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.news-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+}
+
+.news-body strong {
+  font-size: 0.92rem;
+}
+
+.news-meta {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+}
+
+.news-external {
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.profession-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.demand-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.demand-badge svg {
+  width: 15px;
+  height: 15px;
+}
+
+.demand-badge.demand-alta {
+  background: var(--score-good-bg);
+  color: var(--score-good);
+}
+
+.demand-badge.demand-media {
+  background: var(--score-warn-bg);
+  color: var(--score-warn);
+}
+
+.demand-badge.demand-baja {
+  background: var(--score-bad-bg);
+  color: var(--score-bad);
+}
+
+.demand-badge.demand-sin-datos {
+  background: var(--color-surface-hover);
+  color: var(--color-text-tertiary);
+}
+
+.retry-link {
+  text-decoration: underline;
+  margin-left: var(--space-2);
+}
+</style>

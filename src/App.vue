@@ -15,6 +15,10 @@ onMounted(() => {
 
 <template>
   <AppLayout>
-    <RouterView />
+    <RouterView v-slot="{ Component, route }">
+      <Transition name="route-fade" mode="out-in">
+        <component :is="Component" :key="route.path" />
+      </Transition>
+    </RouterView>
   </AppLayout>
 </template>
