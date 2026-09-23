@@ -30,12 +30,14 @@ const pool = require('../config/database')
  * @param {string} profileSignature
  * @param {string} modelVersion
  * @param {string} dataVersion
+ * @param {number} [maxAgeDays] si se indica, ignora resultados más antiguos
  * @returns {Promise<MarketAnalysisRow | null>}
  */
 async function findByProfileSignature(
   profileSignature,
   modelVersion,
-  dataVersion
+  dataVersion,
+  maxAgeDays = 36500
 ) {
   const result = await pool.query(
     `
@@ -55,10 +57,11 @@ async function findByProfileSignature(
       WHERE profile_signature = $1
         AND model_version = $2
         AND data_version = $3
+        AND created_at >= NOW() - make_interval(days => $4::int)
       ORDER BY created_at DESC
       LIMIT 1
     `,
-    [profileSignature, modelVersion, dataVersion]
+    [profileSignature, modelVersion, dataVersion, maxAgeDays]
   )
 
   return result.rows[0] || null

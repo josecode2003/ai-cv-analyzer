@@ -4,9 +4,13 @@ require('dotenv').config({ quiet: true })
 
 const pool = require('../src/config/database')
 
-const { compareCVWithJobOffer } = require('../src/services/jobComparisonService')
+const {
+  compareCVWithJobOffer
+} = require('../src/services/jobComparisonService')
 
-const { createComparison } = require('../src/repositories/jobComparisonRepository')
+const {
+  createComparison
+} = require('../src/repositories/jobComparisonRepository')
 
 const { createComparisonHash } = require('../src/services/hashService')
 
@@ -166,9 +170,17 @@ async function runComparisons() {
 
     const cvAnalysis = row.analysis
 
-    const result = await compareCVWithJobOffer(cvAnalysis, offer.text, offer.title)
+    const result = await compareCVWithJobOffer(
+      cvAnalysis,
+      offer.text,
+      offer.title
+    )
 
-    const comparisonHash = createComparisonHash(cvAnalysis, offer.title, offer.text)
+    const comparisonHash = createComparisonHash(
+      cvAnalysis,
+      offer.title,
+      offer.text
+    )
 
     await createComparison({
       sessionId: SESSION_ID,
@@ -180,14 +192,20 @@ async function runComparisons() {
       comparisonHash
     })
 
-    console.log(`\n=== CV id=${row.id}: ${row.candidate_name || 'sin nombre'} ===`)
-    console.log(`Profesión del CV: ${cvAnalysis.overallAssessment?.profile || 'N/D'}`)
+    console.log(
+      `\n=== CV id=${row.id}: ${row.candidate_name || 'sin nombre'} ===`
+    )
+    console.log(
+      `Profesión del CV: ${cvAnalysis.overallAssessment?.profile || 'N/D'}`
+    )
     console.log(`Oferta comparada: ${offer.title}`)
     console.log(`Compatibilidad: ${result.compatibilityScore}`)
     console.log(`Resumen: ${result.summary}`)
   }
 
-  console.log(`\nTotal de comparaciones realizadas: ${rows.length} de ${ids.length} solicitadas.`)
+  console.log(
+    `\nTotal de comparaciones realizadas: ${rows.length} de ${ids.length} solicitadas.`
+  )
 }
 
 runComparisons()

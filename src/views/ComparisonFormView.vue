@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AppIcon from '@/components/icons/AppIcon.vue'
 import { getAnalysisById } from '../services/analysisService'
 import { compareCVWithJobOffer } from '../services/comparisonService'
 import { useSession } from '../stores/session'
@@ -102,61 +103,58 @@ function backToAnalysis() {
 </script>
 
 <template>
-  <section class="comparison-page">
-    <div class="page-heading">
-      <div>
-        <button class="back-button" @click="backToAnalysis">
-          ← Volver al análisis
-        </button>
+  <section class="comparison-page container">
+    <button class="btn btn-ghost back-button" @click="backToAnalysis">
+      <AppIcon name="arrow-left" />
+      Volver al análisis
+    </button>
 
-        <span class="badge"> Comparación inteligente </span>
-
-        <h1>Compara tu CV con una oferta</h1>
-
-        <p>
-          La IA analizará el nivel de compatibilidad entre tu CV y los
-          requisitos de la oferta.
-        </p>
-      </div>
+    <div class="page-heading fade-in-up">
+      <span class="badge">Comparación inteligente</span>
+      <h1>Compara tu CV con una oferta</h1>
+      <p>
+        La IA analizará el nivel de compatibilidad entre tu CV y los requisitos
+        de la oferta.
+      </p>
     </div>
 
-    <div class="comparison-form-card">
+    <div class="comparison-form-card fade-in-up">
       <div class="comparison-selected-cv">
-        <div class="selected-cv-icon">📄</div>
+        <span class="selected-cv-icon"><AppIcon name="file-text" /></span>
 
         <div>
-          <span> CV seleccionado </span>
-
-          <strong>
-            {{ analysis?.personalInfo?.name || 'CV actual' }}
-          </strong>
+          <span>CV seleccionado</span>
+          <strong>{{
+            analysis?.personalInfo?.name ||
+            (loadingAnalysis ? 'Cargando…' : 'CV actual')
+          }}</strong>
         </div>
       </div>
 
       <form class="comparison-form" @submit.prevent="submitComparison">
         <div class="form-group">
-          <label>
+          <label for="job-title">
             Título del puesto
-
-            <span> Opcional </span>
+            <span>Opcional</span>
           </label>
 
           <input
+            id="job-title"
             v-model="form.jobTitle"
             type="text"
             maxlength="255"
-            placeholder="Ej. Desarrollador Web Junior"
+            placeholder="Ej. Oficial de electricidad"
           />
         </div>
 
         <div class="form-group">
           <div class="textarea-label">
-            <label> Oferta de empleo </label>
-
-            <span> {{ form.jobOfferText.length }}/30.000 </span>
+            <label for="job-offer">Oferta de empleo</label>
+            <span>{{ form.jobOfferText.length }}/30.000</span>
           </div>
 
           <textarea
+            id="job-offer"
             v-model="form.jobOfferText"
             rows="14"
             maxlength="30000"
@@ -164,18 +162,158 @@ function backToAnalysis() {
           ></textarea>
         </div>
 
-        <div v-if="error" class="error-message">
-          {{ error }}
-        </div>
+        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
 
         <button
           type="submit"
-          class="primary-button comparison-submit"
+          class="btn btn-primary comparison-submit"
           :disabled="creating"
         >
-          {{ creating ? 'Comparando con IA...' : 'Comparar CV con oferta' }}
+          <AppIcon name="sparkles" />
+          {{ creating ? 'Comparando con IA…' : 'Comparar CV con oferta' }}
         </button>
       </form>
     </div>
   </section>
 </template>
+
+<style scoped>
+.comparison-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 760px;
+}
+
+.back-button {
+  align-self: flex-start;
+}
+
+.page-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.page-heading h1 {
+  font-size: 1.8rem;
+  margin-top: var(--space-2);
+}
+
+.page-heading p {
+  color: var(--color-text-secondary);
+}
+
+.comparison-form-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.comparison-selected-cv {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+}
+
+.selected-cv-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--accent-strong);
+  flex-shrink: 0;
+}
+
+.comparison-selected-cv > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.comparison-selected-cv span {
+  font-size: 0.74rem;
+  color: var(--color-text-tertiary);
+}
+
+.comparison-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.form-group label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.form-group label span {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+}
+
+.textarea-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.textarea-label span {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.75rem var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  transition: border-color var(--duration-base) var(--ease-out);
+  resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.comparison-submit {
+  align-self: flex-start;
+}
+
+@media (max-width: 640px) {
+  .comparison-submit {
+    width: 100%;
+  }
+}
+</style>

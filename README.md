@@ -15,8 +15,9 @@ El usuario puede, sin necesidad de registrarse ni iniciar sesión:
 - Subir su CV en formato PDF, para prácticamente cualquier profesión u oficio (no solo perfiles de oficina/tecnología).
 - Analizar el contenido del CV mediante Inteligencia Artificial.
 - Obtener información estructurada sobre su perfil profesional (ocupación, sector, subsector, senioridad, ubicación, competencias clave).
-- Consultar una puntuación global del CV, reproducible para un mismo contenido.
-- Consultar la situación del mercado laboral español para su perfil, con datos verificables, fuente y fecha.
+- Obtener una evaluación estricta con el **baremo de su propia profesión** (un electricista se mide con criterios de electricista, un médico con los de médico), criterio a criterio y con la cita del CV que lo prueba.
+- Consultar una puntuación global calculada por fórmula (no la decide la IA), con topes cuando falta un requisito obligatorio de la profesión.
+- Consultar un resumen de la situación del mercado laboral en España, una nota sobre la demanda de su profesión y la noticia más reciente de un periódico.
 - Guardar y consultar sus análisis anteriores.
 - Eliminar análisis del historial.
 - Comparar uno de sus CV con una oferta de empleo.
@@ -66,29 +67,36 @@ Generación de hash
  ↓
 Comprobación de CV existente
  ↓
-OpenAI API
+1. Detección de la profesión (gpt-4.1-mini) — rechaza (422) PDFs que no son un CV
  ↓
-Análisis estructurado
+2. Baremo de la profesión (gpt-4.1, generado una vez y guardado en `profession_rubrics`)
+ ↓
+3. Evaluación criterio a criterio + extracción de datos (gpt-4.1)
+ ↓
+4. Verificación de citas y cálculo de la nota (código, sin IA)
  ↓
 PostgreSQL
  ↓
 Resultado
 ```
 
-El análisis permite obtener información como:
+### Evaluación estricta por profesión
 
-- Datos personales.
-- Perfil profesional estructurado (ver más abajo).
-- Nivel profesional.
-- Experiencia.
-- Formación.
-- Habilidades.
-- Evaluación general.
-- Puntuación del CV.
+Cada CV se evalúa con dos tipos de criterios:
+
+- **16 criterios genéricos**, definidos en código e iguales para todos (fechas en cada puesto, logros cuantificados, datos de contacto, estructura, ortografía…).
+- **6–12 criterios de su profesión** (el _baremo_), que genera el modelo **una sola vez por profesión** y se guarda en la base de datos. Así todos los electricistas se miden con exactamente el mismo baremo: el carné de instalador REBT, la titulación de FP de electricidad, la lectura de planos, etc. El baremo marca como **obligatorio** solo lo que la ley exige para ejercer (título de socorrista, colegiación médica, carné REBT…) y acepta el FP como vía válida cuando lo es en España.
+
+El modelo solo dictamina cada criterio (**cumple / parcial / no cumple**) y aporta una **cita literal del CV** como prueba. La nota la calcula `scoringService` con una fórmula fija:
+
+- Cada categoría = media ponderada de sus criterios (cumple = 1, parcial = 0,5, no cumple = 0; pesos 3 = esencial, 2 = importante, 1 = complemento).
+- Global = Experiencia 30 % + Habilidades 25 % + Formación reglada 15 % + Cursos y certificaciones 15 % + Presentación 15 %.
+- **Verificación de citas**: si la cita no aparece literalmente en el CV, el dictamen baja un escalón (la IA no puede "dar por hecho" algo que el CV no dice).
+- **Topes**: si falta un requisito obligatorio, la nota global no puede pasar de 55 (ni de 40 la categoría afectada); si solo está parcialmente acreditado, de 70.
+
+Resultado: la nota es coherente entre CVs de la misma profesión y prácticamente reproducible para el mismo CV (en pruebas con CVs reales, ±2 puntos entre ejecuciones).
 
 El resultado se guarda en PostgreSQL para poder consultarlo posteriormente.
-
-La llamada al modelo se hace con `temperature: 0` precisamente para que la puntuación sea lo más reproducible posible: el mismo CV, con la misma versión de prompt/modelo, debe producir la misma puntuación.
 
 ---
 
@@ -140,37 +148,33 @@ Este perfil es la única entrada del módulo de **Inteligencia de mercado labora
 
 ## 📊 Inteligencia de mercado laboral en España
 
-Además del análisis del propio CV, la aplicación ofrece una **Situación del mercado laboral** para el perfil detectado, con una regla no negociable:
-
-> **El modelo de IA no puede usar su conocimiento interno como fuente de datos del mercado.** Cualquier cifra (demanda, salario, tendencias...) debe proceder de una búsqueda real y citar su fuente y fecha. Si no se encuentra un dato fiable, se muestra explícitamente "No hay datos suficientes para estimar este indicador" en vez de inventarlo.
-
-Arquitectura:
+Además del análisis del propio CV, la aplicación muestra la **situación del mercado laboral**, en dos bloques independientes y **sin listas de fuentes ni enlaces**, salvo uno: la noticia más reciente de un periódico.
 
 ```text
-professionalProfile (ya extraído del CV)
- ↓
-Firma de perfil (ocupación + sector + subsector + senioridad + ubicación)
- ↓
-¿Existe un Market Analysis en caché para esta firma?
- ├── Sí → Reutilizar (sin llamar a ningún servicio externo)
- └── No → Buscar en la web (herramienta `web_search` de la API de OpenAI,
-          priorizando SEPE, INE, Ministerio de Trabajo, Seguridad Social,
-          EURES, Eurostat, observatorios de empleo e informes laborales
-          reconocidos)
+Resumen general de España (uno al día, compartido por todos los usuarios)
+ ├── ¿Existe el de hoy en `labor_market_snapshots`? → Reutilizar
+ └── No → web_search (INE/EPA, afiliación, paro registrado, noticias)
           ↓
-        Cada dato declara su propio nivel de confianza:
-        dato oficial / otra fuente / estimación / sin datos suficientes
+        Cifras clave: se descarga la página citada y solo se publican
+        las que esa página respalda (claimVerificationService)
           ↓
-        Guardar en `market_analyses` y devolver al usuario
+        Noticia: la más reciente de un periódico español reconocido
+        (lista blanca de dominios), con fecha de los últimos 45 días y
+        URL comprobada; si no hay ninguna válida, búsqueda dedicada
+          ↓
+        Si todo falla → último resumen de los 7 días anteriores
+
+Nota de la profesión (2-3 frases + habilidades más demandadas)
+ └── Cacheada 30 días por profesión en `market_analyses`
 ```
 
 Puntos clave del diseño:
 
-- **Desacoplado del análisis del CV**: el CV Analysis y el Market Analysis son procesos independientes (`cvAnalysisRepository` / `marketAnalysisRepository`, `aiService` / `marketAnalysisService`). Se puede actualizar el análisis de mercado sin volver a procesar ningún PDF.
-- **Caché global por perfil, no por CV ni por sesión**: dos CVs distintos con el mismo perfil (misma ocupación/sector/senioridad/ubicación) comparten el mismo Market Analysis.
-- **Versionado independiente**: `MARKET_ANALYSIS_VERSION` (modelo/prompt) y `MARKET_DATA_VERSION` (datos) permiten invalidar la caché de mercado — por ejemplo, porque los datos han quedado desactualizados — sin tocar ningún CV ya analizado, y sin desplegar código nuevo (`MARKET_DATA_VERSION` es una variable de entorno).
-- **Resiliente a fallos externos**: si la búsqueda web falla o tarda demasiado (timeout de 45 s), el endpoint responde igualmente con éxito (`available: false` y un mensaje claro), sin romper la petición ni inventar un resultado de repuesto.
-- **La sección "Perfil detectado"** en el informe muestra ocupación, sector, subsector, senioridad y ubicación; **"Situación del mercado laboral"** muestra demanda, salario, tendencias, sectores que contratan, puestos relacionados, competencias demandadas, distribución geográfica, recomendaciones y la lista de fuentes consultadas con su fecha.
+- **Desacoplado del análisis del CV**: el mercado se calcula a partir de la profesión ya detectada, nunca reprocesa el PDF.
+- **Coste acotado**: el resumen general se genera como mucho una vez al día y la nota de cada profesión una vez al mes, sin importar cuántos CVs se analicen.
+- **Sin cifras inventadas**: el resumen y los puntos clave no pueden llevar cifras; las cifras clave solo se muestran si la página de la que salen las respalda.
+- **Resiliente a fallos externos**: cada bloque se resuelve por separado; si uno falla, se muestra el otro. Si fallan los dos, el endpoint responde `available: false` con un mensaje claro.
+- **Versionado independiente**: `MARKET_DATA_VERSION` (variable de entorno) invalida las cachés de mercado sin tocar ningún CV.
 
 > **Decisión de arquitectura documentada:** esta versión usa la herramienta de búsqueda web integrada en la API de OpenAI (Responses API, `tools: [{ type: 'web_search' }]`) como fuente de datos en tiempo real, en vez de integrar directamente las APIs estadísticas oficiales (SEPE/INE/Eurostat no ofrecen una API REST simple de "dame la demanda actual de la profesión X"; integrarlas de forma robusta sería un proyecto en sí mismo). Es la vía más razonable, dentro del alcance de esta iteración, para cumplir la regla de "no inventar datos" citando fuente y fecha reales. Migrar a datasets oficiales descargados/indexados es una mejora futura natural, sin cambiar el resto de la arquitectura.
 
@@ -266,7 +270,8 @@ El proyecto incorpora:
 - Exclusión de `.env` mediante `.gitignore`.
 - Eliminación de archivos PDF temporales después de su procesamiento: el PDF original nunca se conserva, solo el resultado estructurado del análisis.
 - Minimización de datos en el Market Analysis: la tabla `market_analyses` no almacena ningún dato personal del CV (ni nombre, ni email, ni el propio texto del currículum), solo el perfil profesional agregado (ocupación/sector/ubicación) y el informe de mercado, que es información pública sobre el mercado laboral, no sobre la persona.
-- Timeout explícito (45 s) en las llamadas a la API de búsqueda de mercado, para que una fuente externa lenta no bloquee la petición del usuario.
+- Timeouts explícitos (60-90 s) en las llamadas con búsqueda web, para que una fuente externa lenta no bloquee la petición del usuario.
+- La única URL externa que se muestra al usuario (la noticia) debe pertenecer a una lista blanca de periódicos españoles, usar http(s) y existir de verdad.
 
 Las credenciales y claves privadas no forman parte del repositorio.
 
@@ -303,8 +308,10 @@ Las credenciales y claves privadas no forman parte del repositorio.
 ## Inteligencia Artificial
 
 - **OpenAI API** (Responses API, salida estructurada con `json_schema` en modo `strict`)
-- Modelo `gpt-4.1`
-- Herramienta `web_search` nativa de la API, usada exclusivamente por el Market Analysis para fundamentar sus datos en fuentes reales
+- `gpt-4.1`: baremo de cada profesión, evaluación del CV, mercado laboral y comparación con ofertas
+- `gpt-4.1-mini`: detección de la profesión (paso rápido y barato)
+- Salidas estructuradas (`json_schema` en modo `strict`) y `temperature: 0` en todas las llamadas
+- Herramienta `web_search` nativa de la API, usada exclusivamente por el mercado laboral
 
 ## Procesamiento de documentos
 
@@ -324,7 +331,7 @@ ai-cv-analyzer/
 │
 ├── backend/
 │   ├── migrations/
-│   │   └── 001_...  →  007_add_market_analysis.js
+│   │   └── 001_...  →  008_add_rubrics_and_market_snapshots.js
 │   ├── src/
 │   │   ├── config/
 │   │   │   ├── database.js
@@ -333,14 +340,18 @@ ai-cv-analyzer/
 │   │   ├── repositories/
 │   │   │   ├── cvAnalysisRepository.js
 │   │   │   ├── jobComparisonRepository.js
+│   │   │   ├── laborMarketRepository.js
 │   │   │   ├── marketAnalysisRepository.js
+│   │   │   ├── professionRubricRepository.js
 │   │   │   └── sessionRepository.js
 │   │   ├── routes/
 │   │   │   ├── cvRoutes.js
 │   │   │   ├── jobComparisonRoutes.js
 │   │   │   └── marketRoutes.js
 │   │   ├── services/
-│   │   │   ├── aiService.js
+│   │   │   ├── aiService.js            (pipeline de análisis del CV)
+│   │   │   ├── rubricService.js        (profesión + baremo por profesión)
+│   │   │   ├── scoringService.js       (nota determinista y verificación de citas)
 │   │   │   ├── marketAnalysisService.js
 │   │   │   ├── jobComparisonService.js
 │   │   │   ├── hashService.js
@@ -357,9 +368,15 @@ ai-cv-analyzer/
 │   ├── components/
 │   │   ├── analysis/
 │   │   │   ├── AnalysisDetail.vue
+│   │   │   ├── CriteriaBoard.vue       (baremo de la profesión)
 │   │   │   ├── MarketAnalysis.vue
-│   │   │   └── MarketEvidence.vue
-│   │   └── cv/
+│   │   │   ├── ScoreGauge.vue
+│   │   │   └── ScoreMeter.vue
+│   │   ├── cv/
+│   │   │   ├── AnalyzingProgress.vue
+│   │   │   └── CVUploader.vue
+│   │   ├── icons/
+│   │   └── ui/                         (ThemeToggle, ConfirmDialog)
 │   │
 │   ├── layouts/
 │   │   └── AppLayout.vue
@@ -386,7 +403,8 @@ ai-cv-analyzer/
 │   │   └── comparisonService.js
 │   │
 │   ├── utils/
-│   │   └── format.js
+│   │   ├── format.js
+│   │   └── theme.js
 │   │
 │   ├── App.vue
 │   ├── app.css
@@ -527,7 +545,7 @@ DELETE /api/cv/:id
 POST /api/cv/:id/market-analysis
 ```
 
-Genera (o recupera de caché) el análisis de mercado laboral para el perfil profesional detectado en el CV `:id`. Nunca reprocesa el CV: solo lee su `professionalProfile` ya extraído. Devuelve `available: false` con un mensaje claro, en vez de un error, cuando no hay perfil detectado o la fuente externa no está disponible.
+Devuelve el resumen general del mercado laboral en España (`general`, con la noticia más reciente en `general.news`) y la nota de demanda de la profesión del CV `:id` (`profession`). Cualquiera de los dos puede ser `null` si no está disponible. Nunca reprocesa el CV. Devuelve `available: false` con un mensaje claro, en vez de un error, cuando no se puede obtener ninguno de los dos.
 
 ## Comparaciones
 
@@ -688,7 +706,7 @@ http://localhost:5173
 
 # ✅ Calidad de código
 
-El proyecto usa **ESLint** y **Prettier** tanto en el frontend como en el backend, y una suite de **Jest** con 47 tests en el backend (incluye acceso sin login, subida sin cuenta, caché por hash entre sesiones, aislamiento entre sesiones, detección de perfil en 6 sectores distintos, perfiles híbridos, caché y fallos del Market Analysis).
+El proyecto usa **ESLint** y **Prettier** tanto en el frontend como en el backend, y una suite de **Jest** con 120 tests en el backend (incluye acceso sin login, subida sin cuenta, caché por hash entre sesiones, aislamiento entre sesiones, detección de perfil en 6 sectores distintos, perfiles híbridos, cálculo determinista de la nota, verificación de citas, topes por requisitos obligatorios, rechazo de PDFs que no son CV, selección y validación de la noticia, y caché y fallos del mercado laboral).
 
 Desde la raíz (frontend) o desde `backend/` (backend):
 

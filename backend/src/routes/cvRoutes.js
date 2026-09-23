@@ -226,6 +226,14 @@ router.post('/', analysisLimiter, upload.single('cv'), async (req, res) => {
       cached: false
     })
   } catch (error) {
+    if (error?.name === 'NotACVError') {
+      return res.status(422).json({
+        status: 'error',
+
+        message: error.message
+      })
+    }
+
     console.error('Error procesando el CV:', error)
 
     return res.status(500).json({

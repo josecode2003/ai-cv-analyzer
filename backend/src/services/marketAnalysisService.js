@@ -10,368 +10,230 @@ const { fetchSourceContent } = require('./sourceContentService')
 
 const { verifyClaim } = require('./claimVerificationService')
 
+const {
+  findSnapshot,
+  findLatestSnapshot,
+  saveSnapshot
+} = require('../repositories/laborMarketRepository')
+
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
+  maxRetries: 3
 })
 
 const MARKET_ANALYSIS_MODEL = 'gpt-4.1'
 
-const MARKET_ANALYSIS_VERSION = `${MARKET_ANALYSIS_MODEL}-v1`
+const MARKET_ANALYSIS_VERSION = `${MARKET_ANALYSIS_MODEL}-v2`
 
 /*
- * Cada afirmación cuantitativa/factual del informe se modela
- * como una "evidencia": debe declarar su propio nivel de
- * confianza y, cuando corresponda, la fuente y fecha exactas
- * de donde procede. Esto es lo que impide (estructuralmente,
- * no solo mediante instrucciones) que una cifra "inventada"
- * pase como un dato con fuente: si no hay fuente real, el
- * propio schema obliga a declarar 'sin_datos_suficientes'.
+ * El informe de mercado tiene dos partes independientes:
+ *
+ * - general: la situación del mercado laboral en España. No depende
+ *   del CV, así que se genera como mucho una vez al día y se comparte
+ *   entre todos los usuarios (labor_market_snapshots).
+ * - profession: 2-3 frases sobre la demanda de la profesión del CV
+ *   (se cachea por profesión en market_analyses, ver marketRoutes).
+ *
+ * Por decisión de producto no se muestran fuentes ni enlaces, salvo
+ * UNA noticia reciente de un periódico. Aun así, las cifras se siguen
+ * verificando internamente contra la página de la que salen, y solo
+ * se publican las que la página respalda.
  */
-const evidenceProperties = {
-  confidence: {
-    type: 'string',
-    enum: ['dato_oficial', 'otra_fuente', 'estimacion', 'sin_datos_suficientes']
-  },
-  source: { type: 'string' },
-  sourceUrl: { type: 'string' },
-  dataDate: { type: 'string' }
-}
 
-const evidenceRequired = ['confidence', 'source', 'sourceUrl', 'dataDate']
+const GENERAL_TIMEOUT_MS = 90000
+const PROFESSION_TIMEOUT_MS = 60000
 
-const marketAnalysisSchema = {
+const FALLBACK_SNAPSHOT_MAX_AGE_DAYS = 7
+const NEWS_MAX_AGE_DAYS = 45
+
+/*
+ * Solo se enlaza una noticia si viene de un medio de información
+ * general o económica español reconocido. Evita enlazar blogs,
+ * agregadores o páginas corporativas que el modelo haya encontrado.
+ */
+const NEWSPAPER_DOMAINS = [
+  'elpais.com',
+  'elmundo.es',
+  'abc.es',
+  'lavanguardia.com',
+  'elconfidencial.com',
+  'expansion.com',
+  'eleconomista.es',
+  'cincodias.elpais.com',
+  'rtve.es',
+  '20minutos.es',
+  'europapress.es',
+  'eldiario.es',
+  'elperiodico.com',
+  'larazon.es',
+  'publico.es',
+  'efe.com',
+  'cadenaser.com',
+  'cope.es',
+  'lainformacion.com',
+  'elespanol.com',
+  'infolibre.es',
+  'newtral.es',
+  'antena3.com',
+  'telecinco.es',
+  'lasexta.com',
+  'heraldo.es',
+  'lavozdegalicia.es',
+  'elcorreo.com',
+  'diariovasco.com',
+  'lasprovincias.es',
+  'levante-emv.com',
+  'diariodesevilla.es',
+  'elnortedecastilla.es',
+  'ideal.es',
+  'laverdad.es',
+  'lne.es',
+  'farodevigo.es',
+  'diariodemallorca.es',
+  'canarias7.es',
+  'eldia.es',
+  'diariodenavarra.es',
+  'elcomercio.es',
+  'ara.cat',
+  'elnacional.cat',
+  'naiz.eus',
+  'huffingtonpost.es',
+  'vozpopuli.com',
+  'elplural.com'
+]
+
+const generalSchema = {
   type: 'object',
   additionalProperties: false,
-
   properties: {
-    profileSummary: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        occupation: { type: 'string' },
-        sector: { type: 'string' },
-        region: { type: 'string' }
-      },
-      required: ['occupation', 'sector', 'region']
-    },
-
-    dataSufficiency: {
-      type: 'string',
-      enum: ['sufficient', 'partial', 'insufficient']
-    },
-
-    situacionActual: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        summary: { type: 'string' },
-        ...evidenceProperties
-      },
-      required: ['summary', ...evidenceRequired]
-    },
-
-    demand: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        level: {
-          type: 'string',
-          enum: ['alta', 'media', 'baja', 'sin_datos_suficientes']
-        },
-        explanation: { type: 'string' },
-        ...evidenceProperties
-      },
-      required: ['level', 'explanation', ...evidenceRequired]
-    },
-
-    salary: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        range: { type: 'string' },
-        period: {
-          type: 'string',
-          enum: ['mensual', 'anual', 'sin_datos_suficientes']
-        },
-        ...evidenceProperties
-      },
-      required: ['range', 'period', ...evidenceRequired]
-    },
-
-    trends: {
+    headline: { type: 'string' },
+    summary: { type: 'string' },
+    keyFigures: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          statement: { type: 'string' },
-          ...evidenceProperties
+          label: { type: 'string' },
+          value: { type: 'string' },
+          period: { type: 'string' },
+          sourceUrl: { type: 'string' }
         },
-        required: ['statement', ...evidenceRequired]
+        required: ['label', 'value', 'period', 'sourceUrl']
       }
     },
-
-    sectorsHiring: {
-      type: 'array',
-      items: { type: 'string' }
-    },
-
-    relatedRoles: {
-      type: 'array',
-      items: { type: 'string' }
-    },
-
-    skillsInDemand: {
-      type: 'array',
-      items: { type: 'string' }
-    },
-
-    geographicDistribution: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          region: { type: 'string' },
-          note: { type: 'string' },
-          ...evidenceProperties
-        },
-        required: ['region', 'note', ...evidenceRequired]
-      }
-    },
-
-    recommendations: {
-      type: 'array',
-      items: { type: 'string' }
-    },
-
-    sourcesUsed: {
+    highlights: { type: 'array', items: { type: 'string' } },
+    newsCandidates: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
           title: { type: 'string' },
-          url: { type: 'string' },
           publisher: { type: 'string' },
-          date: { type: 'string' }
+          url: { type: 'string' },
+          publishedAt: { type: 'string' }
         },
-        required: ['title', 'url', 'publisher', 'date']
+        required: ['title', 'publisher', 'url', 'publishedAt']
       }
     }
   },
-
   required: [
-    'profileSummary',
-    'dataSufficiency',
-    'situacionActual',
-    'demand',
-    'salary',
-    'trends',
-    'sectorsHiring',
-    'relatedRoles',
-    'skillsInDemand',
-    'geographicDistribution',
-    'recommendations',
-    'sourcesUsed'
+    'headline',
+    'summary',
+    'keyFigures',
+    'highlights',
+    'newsCandidates'
   ]
 }
 
-const SYSTEM_PROMPT = `
-You are a Spanish (España) labor-market research analyst. You produce a grounded, source-cited report about the CURRENT job market in Spain for a specific professional profile.
+const GENERAL_PROMPT = `
+You are a labor-market analyst writing a short, plain-language briefing about the CURRENT state of the job market in Spain (España) as a whole, for job seekers of any profession.
 
-You have a "web_search" tool. You MUST use it to look for current, verifiable information before answering. Prioritize official and recognized sources: SEPE, INE, Ministerio de Trabajo y Economía Social, Seguridad Social, EURES, Eurostat, observatorios de empleo autonómicos, and reputable labor-market reports (e.g. Randstad Research, Adecco, InfoJobs-Esade, EPData). You may also use other reputable sources when official ones do not cover a specific data point, but always record exactly where each fact came from.
+You have a "web_search" tool. You MUST use it before answering: look for the most recent official data (INE – Encuesta de Población Activa, afiliación a la Seguridad Social, paro registrado del SEPE / Ministerio de Trabajo) and the most recent news about the Spanish labor market.
 
-CRITICAL — DATA INTEGRITY (this is the most important part of your job):
+Return:
+- headline: one sentence (max ~110 characters) summarizing the current situation.
+- summary: one paragraph of 4-6 sentences in plain Spanish explaining the general situation: employment and unemployment trend, which sectors are creating or losing jobs, youth and long-term unemployment, temporary vs permanent contracts, and anything notable right now. Do NOT include numbers or percentages in the summary (figures go only in keyFigures). Do not mention sources, websites or publications.
+- keyFigures: 3-5 of the most important CURRENT figures (e.g. tasa de paro EPA, número de afiliados a la Seguridad Social, paro registrado, tasa de paro juvenil). value is the figure exactly as published (e.g. "10,3 %", "21,8 millones"). period is the reference period (e.g. "EPA 2.º trimestre 2026", "agosto 2026"). sourceUrl is the exact URL of the page where you read that figure (it is used only for internal verification and never shown). Only include figures you actually found in a retrieved page; never use your own background knowledge for a figure.
+- highlights: 3-4 short sentences (max ~120 characters each) with the key takeaways for a job seeker. No numbers, no sources.
+- newsCandidates: up to 3 of the MOST RECENT news articles about the Spanish labor market (employment, unemployment, afiliación, EPA, paro) published by Spanish newspapers (e.g. El País, El Mundo, ABC, La Vanguardia, Expansión, Cinco Días, elEconomista, El Confidencial, RTVE, 20minutos, Europa Press, elDiario.es). Most recent first. publishedAt in YYYY-MM-DD. Only real articles you found with web_search, with their exact URL — never invent or guess a URL.
 
-1. NEVER state a number, statistic, salary figure, percentage, trend or demand level as if it were a fact unless you found it via web_search in an actual retrieved source. Your own background knowledge is NOT a valid source for this report.
-2. Every factual field has a "confidence" value you must set honestly:
-   - "dato_oficial": found in an official statistical/government source, with a real URL and a real date.
-   - "otra_fuente": found in another reputable, identifiable source, with a real URL and a real date.
-   - "estimacion": you are inferring/extrapolating from data that does not directly answer the question (e.g. general sector trends applied to a narrower occupation). Say so explicitly in the text.
-   - "sin_datos_suficientes": you could not find anything reliable. In this case leave "source", "sourceUrl" and "dataDate" as empty strings, and write in the explanation/summary/statement field literally: "No hay datos suficientes para estimar este indicador." Do not guess a number just to fill the field.
-3. NEVER invent a URL, publication name or date. If you are not certain a source real and retrievable, treat it as if you had not found it.
-4. Distinguish clearly, in the wording of every text field, between an official data point, information from another source, your own interpretation, and an estimation. Never present an interpretation or estimation as if it were an official statistic.
-5. Do not present old/historical data as if it were current: always state the date of the data you cite, and if a source is old, say so.
-6. sectorsHiring / relatedRoles / skillsInDemand / recommendations are your interpretive synthesis of what you found — keep them grounded in the sources you actually retrieved and consistent with the rest of the report; do not invent employers, specific job counts or specific companies.
-7. Recommendations must be concrete and actionable, tied to the demand/trends/skills you actually found for this profile in Spain — never generic filler like "sigue formándote".
-8. dataSufficiency: "sufficient" if you found solid current data for most indicators, "partial" if only some, "insufficient" if you found almost nothing reliable for this specific profile/region.
-9. sourcesUsed must list every distinct source you actually cited elsewhere in the report (real title, real URL, real publisher, real date), deduplicated. Empty array if you found nothing usable.
-
-LANGUAGE: Write every text value in Spanish (Spain).
-
-Return ONLY the JSON structure requested by the schema.
+All text in Spanish (Spain). Return ONLY the JSON structure requested by the schema.
 `
 
-/**
- * @param {{ occupation: string, sector: string, subsector: string, seniority: string, region: string, location: string, keySkills: string[] }} profile
- * @returns {Promise<Record<string, unknown>>}
- */
-async function analyzeMarketForProfile(profile) {
-  const userContent = `
-Research the current Spanish (España) labor market for this professional profile, extracted from a candidate's CV:
+const newsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    newsCandidates: generalSchema.properties.newsCandidates
+  },
+  required: ['newsCandidates']
+}
 
-Occupation: ${profile.occupation || 'No determinada'}
-Sector: ${profile.sector || 'No determinado'}
-Subsector: ${profile.subsector || 'No determinado'}
-Seniority: ${profile.seniority || 'No determinada'}
-Location stated in the CV: ${profile.location || 'No indicada'}
-Region (comunidad autónoma) if identifiable: ${profile.region || 'No indicada — usa España como ámbito general'}
-Key skills: ${(profile.keySkills || []).join(', ') || 'No indicadas'}
+const NEWS_PROMPT = `
+Using the "web_search" tool, find the MOST RECENT news articles about the Spanish labor market (empleo, paro, afiliación a la Seguridad Social, EPA, contratación) published by Spanish newspapers. Return up to 5, most recent first, with the exact title, the newspaper name, the exact article URL and the publication date (YYYY-MM-DD). Only real articles you found with web_search — never invent or guess a URL. Return ONLY the JSON structure requested by the schema.
+`
 
-Use web_search to find current, verifiable data about demand, salary ranges, trends, hiring sectors, related roles, in-demand skills and geographic distribution relevant to this exact profile in Spain. If you cannot find reliable data for a specific indicator, say so explicitly instead of guessing.
-  `
-
-  const response = await client.responses.create(
-    {
-      model: MARKET_ANALYSIS_MODEL,
-
-      temperature: 0,
-
-      tools: [
-        {
-          type: 'web_search',
-          search_context_size: 'medium',
-          user_location: {
-            type: 'approximate',
-            country: 'ES'
-          }
-        }
-      ],
-
-      input: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent }
-      ],
-
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'market_analysis',
-          strict: true,
-          schema: marketAnalysisSchema
-        }
-      }
+const professionSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    demandLevel: {
+      type: 'string',
+      enum: ['alta', 'media', 'baja', 'sin_datos']
     },
-    {
-      /*
-       * La búsqueda web puede tardar más que una llamada normal
-       * a la API. Un timeout explícito evita que una fuente
-       * externa lenta o colgada bloquee indefinidamente la
-       * petición HTTP del usuario (ver marketRoutes.js, que ya
-       * captura cualquier error de esta llamada y responde con
-       * "no disponible" en vez de dejar la petición colgada).
-       */
-      timeout: 45000
-    }
-  )
-
-  const result = JSON.parse(response.output_text)
-
-  const formatSanitized = sanitizeMarketResultFormat(result)
-
-  const urlVerified = await verifyMarketResultSources(formatSanitized)
-
-  return verifyClaimsAgainstContent(urlVerified)
+    note: { type: 'string' },
+    skillsInDemand: { type: 'array', items: { type: 'string' } }
+  },
+  required: ['demandLevel', 'note', 'skillsInDemand']
 }
 
-/*
- * Defensa adicional contra alucinaciones de formato: si el
- * modelo marca un dato como respaldado por una fuente
- * ("dato_oficial" / "otra_fuente") pero la URL no tiene una
- * forma mínimamente válida, no confiamos en la cita y
- * degradamos el dato a estimación sin fuente, en vez de
- * mostrar al usuario un enlace que probablemente no existe.
- */
+const PROFESSION_PROMPT = `
+You are a labor-market analyst for Spain (España). You write a very short note about the current job demand for ONE occupation in Spain.
 
-const URL_PATTERN = /^https?:\/\/[^\s]+\.[^\s]+$/i
+You have a "web_search" tool. Use it to check current information (job-offer volume, sector reports, SEPE/observatorio de las ocupaciones, recent news) before answering.
+
+Return:
+- demandLevel: "alta", "media" or "baja" according to what you found; "sin_datos" if you could not find reliable current information for this occupation.
+- note: 2-3 sentences in plain Spanish about how demand for this occupation is doing in Spain right now and what employers are looking for. Do not include specific figures or percentages, and do not mention sources, websites or publications. If demandLevel is "sin_datos", say plainly that there is not enough recent information about this occupation.
+- skillsInDemand: 3-5 short labels of skills, qualifications or specializations currently most demanded for this occupation in Spain. Empty array if "sin_datos".
+
+All text in Spanish (Spain). Return ONLY the JSON structure requested by the schema.
+`
+
+const webSearchTool = size => ({
+  type: 'web_search',
+  search_context_size: size,
+  user_location: { type: 'approximate', country: 'ES' }
+})
 
 /**
- * @param {Record<string, unknown>} evidence
- * @returns {Record<string, unknown>}
- */
-function sanitizeEvidenceFormat(evidence) {
-  if (!evidence || typeof evidence !== 'object') {
-    return evidence
-  }
-
-  const hasCitedSource =
-    evidence.confidence === 'dato_oficial' ||
-    evidence.confidence === 'otra_fuente'
-
-  const urlLooksValid =
-    typeof evidence.sourceUrl === 'string' &&
-    URL_PATTERN.test(evidence.sourceUrl)
-
-  if (hasCitedSource && !urlLooksValid) {
-    return {
-      ...evidence,
-      confidence: 'estimacion',
-      source: '',
-      sourceUrl: '',
-      dataDate: ''
-    }
-  }
-
-  return evidence
-}
-
-/**
- * @param {Record<string, unknown>} result
- * @returns {Record<string, unknown>}
- */
-function sanitizeMarketResultFormat(result) {
-  const sanitized = { ...result }
-
-  for (const key of ['situacionActual', 'demand', 'salary']) {
-    if (sanitized[key]) {
-      sanitized[key] = sanitizeEvidenceFormat(
-        /** @type {any} */ (sanitized[key])
-      )
-    }
-  }
-
-  for (const key of ['trends', 'geographicDistribution']) {
-    if (Array.isArray(sanitized[key])) {
-      sanitized[key] = /** @type {any[]} */ (sanitized[key]).map(
-        sanitizeEvidenceFormat
-      )
-    }
-  }
-
-  if (Array.isArray(sanitized.sourcesUsed)) {
-    sanitized.sourcesUsed = /** @type {any[]} */ (sanitized.sourcesUsed).filter(
-      item => typeof item?.url === 'string' && URL_PATTERN.test(item.url)
-    )
-  }
-
-  return sanitized
-}
-
-/*
- * Defensa contra alucinaciones de CONTENIDO, no solo de
- * formato: el modelo puede citar una URL con forma
- * perfectamente válida, en un dominio real, que simplemente
- * no existe (comprobado en producción: una URL de udit.es con
- * forma válida que la propia web redirige a su página de
- * error 404). Antes de devolver el resultado, comprobamos en
- * vivo que cada URL citada con confianza alta responde
- * realmente.
+ * Fecha de hoy en España (YYYY-MM-DD): el resumen general es "del día"
+ * para un usuario español, no según la zona horaria del servidor.
  *
- * Solo degradamos ante evidencia clara de que la página no
- * existe (404/410 tras seguir redirecciones). Un error de red,
- * un timeout o un 401/403/429 (bloqueo de bots, límite de
- * peticiones) son ambiguos -no prueban que la fuente sea
- * falsa- así que en esos casos mantenemos la cita del modelo:
- * preferimos no castigar una fuente real que un sitio bloquea
- * a bots.
+ * @param {Date} [now]
+ * @returns {string}
  */
+function todayInSpain(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Madrid',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now)
+}
 
-const URL_VERIFY_TIMEOUT_MS = 4000
+const URL_VERIFY_TIMEOUT_MS = 5000
 
-/**
+/*
+ * Solo se descarta una URL ante evidencia clara de que no existe
+ * (404/410 tras seguir redirecciones) o de que no es segura (SSRF).
+ * Un timeout o un 401/403/429 no prueban que la página sea falsa:
+ * muchos periódicos bloquean peticiones automáticas.
+ *
  * @param {string} url
- * @returns {Promise<boolean>} false si se confirma que la página no existe (404/410) o si la URL (o alguna redirección) no es segura (SSRF).
+ * @returns {Promise<boolean>}
  */
 async function verifyUrlReachable(url) {
   try {
@@ -380,12 +242,6 @@ async function verifyUrlReachable(url) {
       signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
     })
 
-    /*
-     * safeFetch devuelve null cuando la URL (o alguna redirección
-     * intermedia) apunta a infraestructura interna. Una URL así
-     * nunca es una fuente legítima, así que se trata igual que un
-     * 404: no confiable.
-     */
     if (!headResponse) {
       return false
     }
@@ -398,10 +254,6 @@ async function verifyUrlReachable(url) {
       return true
     }
 
-    /*
-     * Algunos servidores no aceptan HEAD (405); reintentamos
-     * con GET antes de concluir nada.
-     */
     const getResponse = await safeFetch(url, {
       method: 'GET',
       signal: AbortSignal.timeout(URL_VERIFY_TIMEOUT_MS)
@@ -418,402 +270,338 @@ async function verifyUrlReachable(url) {
 }
 
 /**
- * Recorre todos los campos de tipo "evidencia" del resultado
- * (situacionActual/demand/salary son objetos únicos;
- * trends/geographicDistribution son arrays) y devuelve una lista
- * plana de referencias editables `{ container, key, evidence }`,
- * para no duplicar este recorrido en cada paso de verificación.
- *
- * @param {Record<string, unknown>} result
- * @param {(evidence: any) => boolean} [predicate]
- * @returns {{ container: any, key: string | number, field: string, evidence: any }[]}
- */
-function collectEvidenceEntries(result, predicate = () => true) {
-  const entries = []
-
-  for (const key of ['situacionActual', 'demand', 'salary']) {
-    const evidence = /** @type {any} */ (result[key])
-    if (evidence && predicate(evidence)) {
-      entries.push({ container: result, key, field: key, evidence })
-    }
-  }
-
-  for (const field of ['trends', 'geographicDistribution']) {
-    if (Array.isArray(result[field])) {
-      ;/** @type {any[]} */ (result[field]).forEach((evidence, index) => {
-        if (predicate(evidence)) {
-          entries.push({
-            container: result[field],
-            key: index,
-            field,
-            evidence
-          })
-        }
-      })
-    }
-  }
-
-  return entries
-}
-
-/**
- * Texto en lenguaje natural de lo que esa evidencia concreta
- * afirma, usado como "CLAIM" para el verificador de contenido.
- *
- * @param {string} field
- * @param {any} evidence
- * @returns {string}
- */
-function extractClaimText(field, evidence) {
-  switch (field) {
-    case 'situacionActual':
-      return evidence.summary || ''
-    case 'demand':
-      return `Demanda: ${evidence.level || ''}. ${evidence.explanation || ''}`
-    case 'salary':
-      return `Salario: ${evidence.range || ''} (${evidence.period || ''})`
-    case 'trends':
-      return evidence.statement || ''
-    case 'geographicDistribution':
-      return `${evidence.region || ''}: ${evidence.note || ''}`
-    default:
-      return ''
-  }
-}
-
-const NO_DATA_TEXT = 'No hay datos suficientes para verificar una cifra fiable.'
-
-/**
- * Cuando el contenido de una fuente CONTRADICE o no respalda en
- * absoluto una afirmación (verdict 'unsupported'), el texto
- * original ("22.000 € - 32.000 €") no debe seguir mostrándose
- * como si fuera un dato de mercado confirmado: se sustituye por
- * un mensaje explícito de "no verificado" en el mismo campo que
- * la interfaz ya muestra al usuario. El valor original se
- * conserva únicamente en `verification.originalClaim`, para
- * depuración/auditoría, nunca como dato presentado.
- *
- * @param {string} field
- * @returns {Record<string, unknown>}
- */
-function scrubClaimText(field) {
-  switch (field) {
-    case 'situacionActual':
-      return { summary: NO_DATA_TEXT }
-    case 'demand':
-      return { level: 'sin_datos_suficientes', explanation: NO_DATA_TEXT }
-    case 'salary':
-      return { range: NO_DATA_TEXT, period: 'sin_datos_suficientes' }
-    case 'trends':
-      return { statement: NO_DATA_TEXT }
-    case 'geographicDistribution':
-      return { note: NO_DATA_TEXT }
-    default:
-      return {}
-  }
-}
-
-/**
- * @param {Record<string, unknown>} result
- * @returns {Promise<Record<string, unknown>>}
- */
-async function verifyMarketResultSources(result) {
-  const verified = { ...result }
-
-  const citedEvidenceEntries = collectEvidenceEntries(verified, isCitedEvidence)
-
-  const urlsToVerify = new Set(
-    citedEvidenceEntries.map(entry => entry.evidence.sourceUrl)
-  )
-
-  if (Array.isArray(verified.sourcesUsed)) {
-    for (const source of /** @type {any[]} */ (verified.sourcesUsed)) {
-      if (typeof source?.url === 'string') {
-        urlsToVerify.add(source.url)
-      }
-    }
-  }
-
-  const brokenUrls = new Set()
-
-  await Promise.all(
-    Array.from(urlsToVerify).map(async url => {
-      const reachable = await verifyUrlReachable(url)
-      if (!reachable) {
-        brokenUrls.add(url)
-      }
-    })
-  )
-
-  if (brokenUrls.size === 0) {
-    return verified
-  }
-
-  for (const { container, key, evidence } of citedEvidenceEntries) {
-    if (brokenUrls.has(evidence.sourceUrl)) {
-      container[key] = {
-        ...evidence,
-        confidence: 'estimacion',
-        source: '',
-        sourceUrl: '',
-        dataDate: ''
-      }
-    }
-  }
-
-  if (Array.isArray(verified.sourcesUsed)) {
-    verified.sourcesUsed = /** @type {any[]} */ (verified.sourcesUsed).filter(
-      source => !brokenUrls.has(source.url)
-    )
-  }
-
-  return verified
-}
-
-/**
- * @param {any} evidence
+ * @param {string} url
  * @returns {boolean}
  */
-function isCitedEvidence(evidence) {
-  return (
-    evidence &&
-    typeof evidence === 'object' &&
-    (evidence.confidence === 'dato_oficial' ||
-      evidence.confidence === 'otra_fuente') &&
-    typeof evidence.sourceUrl === 'string' &&
-    evidence.sourceUrl.length > 0
+function isNewspaperUrl(url) {
+  let hostname
+
+  try {
+    const parsed = new URL(url)
+
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false
+    }
+
+    hostname = parsed.hostname.toLowerCase()
+  } catch {
+    return false
+  }
+
+  return NEWSPAPER_DOMAINS.some(
+    domain => hostname === domain || hostname.endsWith(`.${domain}`)
   )
 }
 
-/*
- * TERCERA capa de defensa, la más profunda: la segunda capa
- * (verifyMarketResultSources) solo confirma que la URL EXISTE
- * (categoría A). Que una página exista no significa que respalde
- * el dato concreto que se le atribuye (categorías B/C) — es
- * exactamente el caso real que motivó este módulo: una URL real,
- * con HTTP 200, que no contenía la cifra de salario citada.
- *
- * Para cada evidencia que sigue citada con confianza alta tras la
- * capa anterior:
- *
- *   1. Se descarga su contenido de forma segura y acotada
- *      (sourceContentService — reutiliza el mismo safeFetch, así
- *      que la protección SSRF también aplica aquí).
- *   2. Si no se puede leer el contenido (bloqueado, JS-only,
- *      timeout, PDF no procesable...), NO se afirma que el dato
- *      esté respaldado, pero tampoco se trata la URL como falsa:
- *      se baja un escalón de confianza mantendiendo la fuente.
- *   3. Si se lee el contenido, se comprueba si respalda realmente
- *      la afirmación (claimVerificationService): coincidencia
- *      numérica determinista primero, verificador LLM acotado
- *      solo si hace falta.
- *
- * Cada evidencia termina con un campo `verification` que separa
- * explícitamente las tres capas (urlValid / contentRetrieved /
- * claimSupported), tal y como pide la auditoría: nunca se
- * presenta "la URL existe" como si fuera "el dato está
- * verificado".
+/**
+ * @param {string} publishedAt
+ * @param {string} today YYYY-MM-DD
+ * @returns {boolean}
  */
+function isRecentDate(publishedAt, today) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(publishedAt || '')) {
+    return false
+  }
+
+  const published = Date.parse(`${publishedAt}T00:00:00Z`)
+  const reference = Date.parse(`${today}T00:00:00Z`)
+
+  if (Number.isNaN(published)) {
+    return false
+  }
+
+  const ageDays = (reference - published) / (24 * 60 * 60 * 1000)
+
+  return ageDays >= 0 && ageDays <= NEWS_MAX_AGE_DAYS
+}
 
 /**
- * @param {Record<string, unknown>} result
- * @returns {Promise<Record<string, unknown>>}
+ * Quita los parámetros de seguimiento (utm_*, etc.) que añade la
+ * búsqueda web, para enlazar la URL limpia del artículo.
+ *
+ * @param {string} url
+ * @returns {string}
  */
-async function verifyClaimsAgainstContent(result) {
-  const verified = { ...result }
+function cleanArticleUrl(url) {
+  try {
+    const parsed = new URL(url)
 
-  const allEntries = collectEvidenceEntries(verified)
+    parsed.username = ''
+    parsed.password = ''
 
-  // Toda evidencia (incluida la que ya es sin_datos_suficientes o
-  // estimación sin fuente) recibe un objeto `verification`
-  // consistente, para que el frontend/los tests nunca tengan que
-  // distinguir "no tiene el campo" de "no aplica".
-  for (const { container, key, evidence } of allEntries) {
-    container[key] = {
-      ...evidence,
-      verification: {
-        urlValid: false,
-        contentRetrieved: false,
-        claimSupported: null
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/^utm_/i.test(key)) {
+        parsed.searchParams.delete(key)
+      }
+    }
+
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+/**
+ * Elige la noticia más reciente que cumple todas las condiciones:
+ * periódico reconocido, fecha reciente y URL que existe de verdad.
+ *
+ * @param {Array<{ title: string, publisher: string, url: string, publishedAt: string }>} candidates
+ * @param {string} today
+ * @returns {Promise<{ title: string, publisher: string, url: string, publishedAt: string } | null>}
+ */
+async function pickNews(candidates, today) {
+  const eligible = (candidates || [])
+    .filter(
+      news =>
+        news?.title &&
+        isNewspaperUrl(news.url) &&
+        isRecentDate(news.publishedAt, today)
+    )
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+
+  for (const news of eligible) {
+    const url = cleanArticleUrl(news.url)
+
+    if (await verifyUrlReachable(url)) {
+      return {
+        title: news.title,
+        publisher: news.publisher,
+        url,
+        publishedAt: news.publishedAt
       }
     }
   }
 
-  const citedEntries = collectEvidenceEntries(verified, isCitedEvidence)
+  return null
+}
 
-  if (citedEntries.length === 0) {
-    /*
-     * Nada que descargar/verificar, pero dataSufficiency debe
-     * recalcularse igualmente: si el modelo no citó ninguna
-     * fuente con confianza alta para ningún campo, el estado
-     * final casi nunca puede ser "sufficient" aunque el propio
-     * modelo lo propusiera.
-     */
-    verified.dataSufficiency = computeDataSufficiency(verified)
-    return verified
-  }
-
-  const uniqueUrls = Array.from(
-    new Set(citedEntries.map(entry => entry.evidence.sourceUrl))
+/**
+ * Búsqueda dedicada solo a noticias. Se usa cuando el informe general
+ * no trae ninguna noticia válida (ocurre de forma intermitente: el
+ * modelo a veces prioriza las cifras y no devuelve candidatas).
+ *
+ * @param {string} today
+ * @returns {Promise<Array<{ title: string, publisher: string, url: string, publishedAt: string }>>}
+ */
+async function searchLatestNews(today) {
+  const response = await client.responses.create(
+    {
+      model: MARKET_ANALYSIS_MODEL,
+      temperature: 0,
+      tools: [webSearchTool('medium')],
+      input: [
+        { role: 'system', content: NEWS_PROMPT },
+        { role: 'user', content: `Today is ${today}.` }
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'labor_market_news',
+          strict: true,
+          schema: newsSchema
+        }
+      }
+    },
+    { timeout: PROFESSION_TIMEOUT_MS }
   )
 
-  const contentByUrl = new Map()
+  return JSON.parse(response.output_text).newsCandidates
+}
 
-  await Promise.all(
-    uniqueUrls.map(async url => {
-      contentByUrl.set(url, await fetchSourceContent(url))
-    })
-  )
+/**
+ * Publica solo las cifras que la página citada respalda. Una cifra
+ * que no se puede comprobar no se muestra: el resumen sigue siendo
+ * útil sin ella, y una cifra inventada no.
+ *
+ * @param {Array<{ label: string, value: string, period: string, sourceUrl: string }>} keyFigures
+ * @returns {Promise<Array<{ label: string, value: string, period: string }>>}
+ */
+async function verifyKeyFigures(keyFigures) {
+  const results = await Promise.all(
+    (keyFigures || []).map(async figure => {
+      if (!figure?.value || !/^https?:\/\//i.test(figure.sourceUrl || '')) {
+        return null
+      }
 
-  await Promise.all(
-    citedEntries.map(async ({ container, key, field, evidence }) => {
-      const content = contentByUrl.get(evidence.sourceUrl)
+      const content = await fetchSourceContent(figure.sourceUrl)
 
       if (!content.ok) {
-        // URL válida, contenido no verificable: no se afirma que
-        // el dato esté respaldado, pero tampoco se borra la
-        // fuente (no hay evidencia de que sea falsa).
-        container[key] = {
-          ...evidence,
-          confidence: 'estimacion',
-          verification: {
-            urlValid: true,
-            contentRetrieved: false,
-            claimSupported: null
-          }
-        }
-        return
+        return null
       }
 
-      const claimText = extractClaimText(field, evidence)
-      const verdict = await verifyClaim(claimText, content.text)
+      const verdict = await verifyClaim(
+        `${figure.label}: ${figure.value} (${figure.period})`,
+        content.text
+      )
 
-      if (verdict === 'supported') {
-        container[key] = {
-          ...evidence,
-          verification: {
-            urlValid: true,
-            contentRetrieved: true,
-            claimSupported: true
-          }
-        }
-        return
+      if (verdict !== 'supported') {
+        return null
       }
 
-      if (verdict === 'unsupported') {
-        // El contenido existe y contradice o no contiene la cifra
-        // citada: es la alucinación de contenido que esta capa
-        // existe para atrapar. El texto presentado se sustituye
-        // por un mensaje explícito de "no verificado" (nunca se
-        // muestra la cifra original como dato confirmado); el
-        // valor original queda solo en verification.originalClaim
-        // para depuración.
-        container[key] = {
-          ...evidence,
-          ...scrubClaimText(field),
-          confidence: 'sin_datos_suficientes',
-          source: '',
-          sourceUrl: '',
-          dataDate: '',
-          verification: {
-            urlValid: true,
-            contentRetrieved: true,
-            claimSupported: false,
-            originalClaim: claimText
-          }
-        }
-        return
-      }
-
-      // insufficient_evidence: el contenido toca el tema pero no
-      // permite confirmar la cifra exacta — se trata como
-      // inferencia, no como dato verificado, pero se conserva la
-      // fuente porque sigue siendo contexto relevante real.
-      container[key] = {
-        ...evidence,
-        confidence: 'estimacion',
-        verification: {
-          urlValid: true,
-          contentRetrieved: true,
-          claimSupported: false
-        }
-      }
+      return { label: figure.label, value: figure.value, period: figure.period }
     })
   )
 
-  verified.dataSufficiency = computeDataSufficiency(verified)
+  return /** @type {any[]} */ (results.filter(Boolean))
+}
 
-  return verified
+/**
+ * @param {string} today
+ * @returns {Promise<Record<string, any>>}
+ */
+async function generateGeneralSnapshot(today) {
+  const response = await client.responses.create(
+    {
+      model: MARKET_ANALYSIS_MODEL,
+      temperature: 0,
+      tools: [webSearchTool('medium')],
+      input: [
+        { role: 'system', content: GENERAL_PROMPT },
+        {
+          role: 'user',
+          content: `Today is ${today}. Write the briefing about the Spanish labor market as of today.`
+        }
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'labor_market_general',
+          strict: true,
+          schema: generalSchema
+        }
+      }
+    },
+    { timeout: GENERAL_TIMEOUT_MS }
+  )
+
+  const parsed = JSON.parse(response.output_text)
+
+  const [keyFigures, news] = await Promise.all([
+    verifyKeyFigures(parsed.keyFigures),
+    pickNews(parsed.newsCandidates, today).then(
+      async found =>
+        found || pickNews(await searchLatestNews(today).catch(() => []), today)
+    )
+  ])
+
+  return {
+    updatedAt: today,
+    headline: parsed.headline,
+    summary: parsed.summary,
+    keyFigures,
+    highlights: (parsed.highlights || []).filter(h => h && h.trim()),
+    news
+  }
 }
 
 /*
- * `dataSufficiency` lo propone inicialmente el modelo, ANTES de
- * que exista ninguna verificación real de URL/contenido — es
- * solo su propia impresión de cómo de bien le ha ido la
- * búsqueda. No puede ser la última palabra: si, tras verificar,
- * la mayoría de los campos principales han quedado en estimación
- * o sin datos, el informe NO puede seguir diciendo "sufficient".
- *
- * Se recalcula de forma determinista a partir del estado FINAL
- * (post-verificación) de los tres campos principales del informe
- * (situación actual, demanda, salario), que son los que la
- * interfaz muestra de forma más prominente.
+ * Varias peticiones a la vez el primer día no deben lanzar varias
+ * búsquedas web idénticas: comparten la misma promesa.
  */
+let inFlightGeneral = null
 
-/**
- * @param {any} evidence
- * @returns {'backed' | 'estimate' | 'none'}
+/*
+ * Tras un fallo (búsqueda caída, límite de la API...) no se reintenta
+ * en cada petición: durante este intervalo se sirve el último resumen
+ * disponible, para no repetir búsquedas web de 90 s que van a fallar.
  */
-function classifyEvidenceState(evidence) {
-  if (!evidence || typeof evidence !== 'object') {
-    return 'none'
-  }
+const GENERAL_FAILURE_COOLDOWN_MS = 10 * 60 * 1000
+let lastGeneralFailureAt = 0
 
-  if (
-    evidence.confidence === 'dato_oficial' ||
-    evidence.confidence === 'otra_fuente'
-  ) {
-    return 'backed'
-  }
-
-  if (evidence.confidence === 'estimacion') {
-    return 'estimate'
-  }
-
-  return 'none'
-}
-
-const DATA_SUFFICIENCY_CORE_FIELDS = ['situacionActual', 'demand', 'salary']
-
-/**
- * @param {Record<string, unknown>} result
- * @returns {'sufficient' | 'partial' | 'insufficient'}
- */
-function computeDataSufficiency(result) {
-  const states = DATA_SUFFICIENCY_CORE_FIELDS.map(field =>
-    classifyEvidenceState(/** @type {any} */ (result[field]))
+async function latestFallbackSnapshot() {
+  const fallback = await findLatestSnapshot(
+    MARKET_DATA_VERSION,
+    FALLBACK_SNAPSHOT_MAX_AGE_DAYS
   )
 
-  const backedCount = states.filter(state => state === 'backed').length
-  const noneCount = states.filter(state => state === 'none').length
+  return fallback ? fallback.result : null
+}
 
-  if (noneCount === states.length) {
-    return 'insufficient'
+/**
+ * @returns {Promise<Record<string, any> | null>} null si no hay ningún resumen disponible
+ */
+async function getGeneralMarketSummary() {
+  const today = todayInSpain()
+
+  const stored = await findSnapshot(today, MARKET_DATA_VERSION)
+
+  if (stored) {
+    return stored.result
   }
 
-  if (backedCount >= 2) {
-    return 'sufficient'
+  if (Date.now() - lastGeneralFailureAt < GENERAL_FAILURE_COOLDOWN_MS) {
+    return latestFallbackSnapshot()
   }
 
-  return 'partial'
+  if (!inFlightGeneral) {
+    inFlightGeneral = generateGeneralSnapshot(today)
+      .then(snapshot => saveSnapshot(today, MARKET_DATA_VERSION, snapshot))
+      .then(saved => saved.result)
+      .finally(() => {
+        inFlightGeneral = null
+      })
+  }
+
+  try {
+    return await inFlightGeneral
+  } catch (error) {
+    console.error('Error generando el resumen general del mercado:', error)
+
+    lastGeneralFailureAt = Date.now()
+
+    return latestFallbackSnapshot()
+  }
+}
+
+/**
+ * @param {{ occupation: string, sector?: string }} profile
+ * @returns {Promise<{ occupation: string, demandLevel: string, note: string, skillsInDemand: string[] }>}
+ */
+async function analyzeProfessionDemand(profile) {
+  const response = await client.responses.create(
+    {
+      model: MARKET_ANALYSIS_MODEL,
+      temperature: 0,
+      tools: [webSearchTool('low')],
+      input: [
+        { role: 'system', content: PROFESSION_PROMPT },
+        {
+          role: 'user',
+          content: `Occupation: ${profile.occupation}\nSector: ${profile.sector || 'No indicado'}\nToday is ${todayInSpain()}.`
+        }
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'profession_demand',
+          strict: true,
+          schema: professionSchema
+        }
+      }
+    },
+    { timeout: PROFESSION_TIMEOUT_MS }
+  )
+
+  const parsed = JSON.parse(response.output_text)
+
+  return {
+    occupation: profile.occupation,
+    demandLevel: parsed.demandLevel,
+    note: parsed.note,
+    skillsInDemand:
+      parsed.demandLevel === 'sin_datos' ? [] : parsed.skillsInDemand
+  }
 }
 
 module.exports = {
-  analyzeMarketForProfile,
-  verifyMarketResultSources,
-  verifyClaimsAgainstContent,
-  sanitizeMarketResultFormat,
-  computeDataSufficiency,
+  getGeneralMarketSummary,
+  analyzeProfessionDemand,
+  pickNews,
+  cleanArticleUrl,
+  verifyKeyFigures,
+  isNewspaperUrl,
+  isRecentDate,
+  todayInSpain,
   MARKET_ANALYSIS_VERSION,
   MARKET_DATA_VERSION
 }

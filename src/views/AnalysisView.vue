@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AnalysisDetail from '../components/analysis/AnalysisDetail.vue'
+import AppIcon from '@/components/icons/AppIcon.vue'
 import { getAnalysisById } from '../services/analysisService'
 
 const route = useRoute()
@@ -53,22 +54,27 @@ function analyzeAnotherCV() {
 </script>
 
 <template>
-  <section class="analysis-page">
-    <div class="analysis-page-header">
-      <button class="back-button" @click="goToAnalyses">
-        ← Volver a Mis análisis
-      </button>
+  <section class="analysis-page container">
+    <button class="btn btn-ghost back-button" @click="goToAnalyses">
+      <AppIcon name="arrow-left" />
+      Volver a mis análisis
+    </button>
+
+    <div
+      v-if="loading"
+      class="analysis-skeleton"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div class="skeleton" style="height: 180px"></div>
+      <div class="skeleton" style="height: 90px"></div>
+      <div class="skeleton" style="height: 220px"></div>
+      <div class="skeleton" style="height: 220px"></div>
     </div>
 
-    <div v-if="loading" class="loading-state">
-      <div class="loading-spinner"></div>
-
-      <p>Recuperando análisis...</p>
-    </div>
-
-    <div v-else-if="error" class="error-message page-error">
+    <p v-else-if="error" class="error-message" role="alert">
       {{ error }}
-    </div>
+    </p>
 
     <AnalysisDetail
       v-else-if="analysis"
@@ -80,3 +86,21 @@ function analyzeAnotherCV() {
     />
   </section>
 </template>
+
+<style scoped>
+.analysis-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.back-button {
+  align-self: flex-start;
+}
+
+.analysis-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+</style>

@@ -1,195 +1,180 @@
 /*
- * verifyUrlReachable usa safeFetch (protección SSRF + DNS) en vez
- * de fetch directamente. Estos tests comprueban el comportamiento
- * de verifyMarketResultSources ante distintos códigos HTTP, no la
- * lógica de seguridad en sí (que tiene su propia suite en
- * urlSafetyService.test.js), así que mockeamos safeFetch para que
- * delegue directamente en el fetch controlado por cada test, sin
- * depender de resolución DNS real.
+ * pickNews/verifyKeyFigures usan safeFetch (protección SSRF + DNS),
+ * fetchSourceContent y verifyClaim. Aquí se prueba la lógica de
+ * selección, no esas dependencias (que tienen su propia suite), así
+ * que se mockean.
  */
 jest.mock('../src/services/urlSafetyService', () => ({
   safeFetch: (url, options) => global.fetch(url, options)
 }))
 
+const mockFetchSourceContent = jest.fn()
+const mockVerifyClaim = jest.fn()
+
+jest.mock('../src/services/sourceContentService', () => ({
+  fetchSourceContent: (...args) => mockFetchSourceContent(...args)
+}))
+
+jest.mock('../src/services/claimVerificationService', () => ({
+  verifyClaim: (...args) => mockVerifyClaim(...args)
+}))
+
 const {
-  verifyMarketResultSources,
-  sanitizeMarketResultFormat
+  pickNews,
+  cleanArticleUrl,
+  verifyKeyFigures,
+  isNewspaperUrl,
+  isRecentDate,
+  todayInSpain
 } = require('../src/services/marketAnalysisService')
 
-/*
- * Reproduce en CI, de forma determinista, el problema
- * encontrado en producción: el modelo puede citar una URL con
- * forma perfectamente válida, en un dominio real, que
- * simplemente no existe. verifyMarketResultSources debe
- * detectarlo con una comprobación HTTP real (aquí, mockeada) y
- * degradar esa evidencia a estimación sin fuente.
- */
+const TODAY = '2026-09-23'
 
-function evidence(overrides = {}) {
+function news(overrides = {}) {
   return {
-    confidence: 'otra_fuente',
-    source: 'Fuente de prueba',
-    sourceUrl: 'https://example.com/pagina-real',
-    dataDate: '2026-01-01',
+    title: 'El paro baja en septiembre',
+    publisher: 'El País',
+    url: 'https://elpais.com/economia/2026-09-20/el-paro-baja.html',
+    publishedAt: '2026-09-20',
     ...overrides
   }
 }
 
-function baseResult(overrides = {}) {
-  return {
-    situacionActual: { summary: 'Resumen', ...evidence() },
-    demand: { level: 'media', explanation: 'Explicación', ...evidence() },
-    salary: { range: '20000-30000', period: 'anual', ...evidence() },
-    trends: [],
-    sectorsHiring: [],
-    relatedRoles: [],
-    skillsInDemand: [],
-    geographicDistribution: [],
-    recommendations: [],
-    sourcesUsed: [
-      {
-        title: 'Fuente de prueba',
-        url: 'https://example.com/pagina-real',
-        publisher: 'Test',
-        date: '2026-01-01'
-      }
-    ],
-    ...overrides
-  }
+function mockHttpStatus(statusByUrl) {
+  global.fetch = jest.fn(async url => ({
+    status: statusByUrl[url] ?? 200
+  }))
 }
 
-describe('verifyMarketResultSources', () => {
-  const originalFetch = global.fetch
-
-  afterEach(() => {
-    global.fetch = originalFetch
-    jest.restoreAllMocks()
+describe('isNewspaperUrl', () => {
+  test('acepta periódicos españoles y sus subdominios', () => {
+    expect(isNewspaperUrl('https://elpais.com/economia/x.html')).toBe(true)
+    expect(isNewspaperUrl('https://www.rtve.es/noticias/x')).toBe(true)
+    expect(isNewspaperUrl('https://cincodias.elpais.com/x')).toBe(true)
   })
 
-  test('degrada a estimación una fuente cuya URL responde 404', async () => {
-    global.fetch = jest.fn(async () => ({ status: 404 }))
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('estimacion')
-    expect(result.situacionActual.source).toBe('')
-    expect(result.situacionActual.sourceUrl).toBe('')
-    expect(result.demand.confidence).toBe('estimacion')
-    expect(result.salary.confidence).toBe('estimacion')
-    expect(result.sourcesUsed).toEqual([])
-  })
-
-  test('degrada a estimación una fuente cuya URL responde 410', async () => {
-    global.fetch = jest.fn(async () => ({ status: 410 }))
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('estimacion')
-  })
-
-  test('mantiene la cita cuando la URL responde correctamente (200)', async () => {
-    global.fetch = jest.fn(async () => ({ status: 200 }))
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('otra_fuente')
-    expect(result.situacionActual.sourceUrl).toBe(
-      'https://example.com/pagina-real'
-    )
-    expect(result.sourcesUsed).toHaveLength(1)
-  })
-
-  test('no castiga una fuente real bloqueada por el sitio (403)', async () => {
-    global.fetch = jest.fn(async () => ({ status: 403 }))
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('otra_fuente')
-  })
-
-  test('no castiga una fuente ante un fallo de red o timeout', async () => {
-    global.fetch = jest.fn(async () => {
-      throw new Error('network error')
-    })
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('otra_fuente')
-  })
-
-  test('reintenta con GET cuando HEAD devuelve 405, y degrada si el GET es 404', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce({ status: 405 })
-      .mockResolvedValueOnce({ status: 404 })
-
-    const result = await verifyMarketResultSources(baseResult())
-
-    expect(result.situacionActual.confidence).toBe('estimacion')
-  })
-
-  const noEvidence = () => ({
-    confidence: 'sin_datos_suficientes',
-    source: '',
-    sourceUrl: '',
-    dataDate: ''
-  })
-
-  test('deduplica URLs repetidas en una sola comprobación', async () => {
-    const fetchMock = jest.fn(async () => ({ status: 200 }))
-    global.fetch = fetchMock
-
-    const sameUrl = 'https://example.com/misma-url'
-
-    await verifyMarketResultSources(
-      baseResult({
-        situacionActual: { summary: 'A', ...evidence({ sourceUrl: sameUrl }) },
-        demand: {
-          level: 'media',
-          explanation: 'B',
-          ...evidence({ sourceUrl: sameUrl })
-        },
-        salary: { range: '', period: 'sin_datos_suficientes', ...noEvidence() },
-        sourcesUsed: []
-      })
-    )
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  test('no verifica evidencias marcadas como sin_datos_suficientes', async () => {
-    const fetchMock = jest.fn(async () => ({ status: 404 }))
-    global.fetch = fetchMock
-
-    await verifyMarketResultSources(
-      baseResult({
-        situacionActual: { summary: 'Sin datos', ...noEvidence() },
-        demand: {
-          level: 'sin_datos_suficientes',
-          explanation: '',
-          ...noEvidence()
-        },
-        salary: { range: '', period: 'sin_datos_suficientes', ...noEvidence() },
-        sourcesUsed: []
-      })
-    )
-
-    expect(fetchMock).not.toHaveBeenCalled()
+  test('rechaza otros dominios, imitaciones y protocolos no web', () => {
+    expect(isNewspaperUrl('https://blog-empleo.com/elpais.com')).toBe(false)
+    expect(isNewspaperUrl('https://elpais.com.evil.io/x')).toBe(false)
+    expect(isNewspaperUrl('https://notelpais.com/x')).toBe(false)
+    expect(isNewspaperUrl('javascript:alert(1)')).toBe(false)
+    expect(isNewspaperUrl('no es una url')).toBe(false)
   })
 })
 
-describe('sanitizeMarketResultFormat', () => {
-  test('degrada una URL con formato inválido antes incluso de verificarla en red', () => {
-    const result = sanitizeMarketResultFormat(
-      baseResult({
-        situacionActual: {
-          summary: 'Resumen',
-          ...evidence({ sourceUrl: 'esto-no-es-una-url' })
-        }
-      })
+describe('isRecentDate', () => {
+  test('acepta fechas recientes y rechaza antiguas, futuras o mal formadas', () => {
+    expect(isRecentDate('2026-09-23', TODAY)).toBe(true)
+    expect(isRecentDate('2026-08-20', TODAY)).toBe(true)
+    expect(isRecentDate('2026-06-01', TODAY)).toBe(false)
+    expect(isRecentDate('2026-09-30', TODAY)).toBe(false)
+    expect(isRecentDate('23/09/2026', TODAY)).toBe(false)
+    expect(isRecentDate('', TODAY)).toBe(false)
+  })
+})
+
+describe('cleanArticleUrl', () => {
+  test('quita los parámetros utm y conserva el resto', () => {
+    expect(
+      cleanArticleUrl('https://elpais.com/a.html?id=3&utm_source=openai')
+    ).toBe('https://elpais.com/a.html?id=3')
+  })
+})
+
+describe('pickNews', () => {
+  test('elige la noticia válida más reciente', async () => {
+    mockHttpStatus({})
+
+    const picked = await pickNews(
+      [
+        news({ url: 'https://elpais.com/a.html', publishedAt: '2026-09-10' }),
+        news({ url: 'https://www.rtve.es/b', publishedAt: '2026-09-21' }),
+        news({ url: 'https://abc.es/c', publishedAt: '2026-09-15' })
+      ],
+      TODAY
     )
 
-    expect(result.situacionActual.confidence).toBe('estimacion')
-    expect(result.situacionActual.sourceUrl).toBe('')
+    expect(picked.url).toBe('https://www.rtve.es/b')
+  })
+
+  test('descarta una noticia cuya URL da 404 y pasa a la siguiente', async () => {
+    mockHttpStatus({ 'https://www.rtve.es/b': 404 })
+
+    const picked = await pickNews(
+      [
+        news({ url: 'https://www.rtve.es/b', publishedAt: '2026-09-21' }),
+        news({ url: 'https://abc.es/c', publishedAt: '2026-09-15' })
+      ],
+      TODAY
+    )
+
+    expect(picked.url).toBe('https://abc.es/c')
+  })
+
+  test('no penaliza a un periódico que bloquea bots (403)', async () => {
+    mockHttpStatus({ 'https://elpais.com/a.html': 403 })
+
+    const picked = await pickNews(
+      [news({ url: 'https://elpais.com/a.html' })],
+      TODAY
+    )
+
+    expect(picked).not.toBeNull()
+  })
+
+  test('devuelve null si ninguna noticia es de un periódico o es reciente', async () => {
+    mockHttpStatus({})
+
+    const picked = await pickNews(
+      [
+        news({ url: 'https://blog.example.com/x' }),
+        news({ publishedAt: '2025-01-01' })
+      ],
+      TODAY
+    )
+
+    expect(picked).toBeNull()
+  })
+})
+
+describe('verifyKeyFigures', () => {
+  beforeEach(() => {
+    mockFetchSourceContent.mockReset()
+    mockVerifyClaim.mockReset()
+  })
+
+  test('publica solo las cifras que la fuente respalda y oculta la URL', async () => {
+    mockFetchSourceContent.mockResolvedValue({ ok: true, text: 'contenido' })
+    mockVerifyClaim
+      .mockResolvedValueOnce('supported')
+      .mockResolvedValueOnce('unsupported')
+      .mockResolvedValueOnce('insufficient_evidence')
+
+    const figures = await verifyKeyFigures([
+      { label: 'A', value: '1 %', period: 'T2', sourceUrl: 'https://ine.es/a' },
+      { label: 'B', value: '2 %', period: 'T2', sourceUrl: 'https://ine.es/b' },
+      { label: 'C', value: '3 %', period: 'T2', sourceUrl: 'https://ine.es/c' }
+    ])
+
+    expect(figures).toEqual([{ label: 'A', value: '1 %', period: 'T2' }])
+  })
+
+  test('descarta una cifra cuya fuente no se puede leer o no tiene URL', async () => {
+    mockFetchSourceContent.mockResolvedValue({ ok: false, reason: 'timeout' })
+
+    const figures = await verifyKeyFigures([
+      { label: 'A', value: '1 %', period: 'T2', sourceUrl: 'https://ine.es/a' },
+      { label: 'B', value: '2 %', period: 'T2', sourceUrl: '' }
+    ])
+
+    expect(figures).toEqual([])
+    expect(mockVerifyClaim).not.toHaveBeenCalled()
+  })
+})
+
+describe('todayInSpain', () => {
+  test('usa la hora de Madrid, no la del servidor', () => {
+    // 23:30 UTC del 22 de septiembre ya es día 23 en Madrid (UTC+2).
+    expect(todayInSpain(new Date('2026-09-22T23:30:00Z'))).toBe('2026-09-23')
   })
 })
