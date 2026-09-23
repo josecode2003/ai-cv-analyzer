@@ -219,6 +219,33 @@ describe('CV upload integration', () => {
   })
 
   /* =======================================================
+     PDF QUE NO ES UN CV
+     ======================================================= */
+
+  test('debe responder 422 cuando el PDF no parece un currículum', async () => {
+    const { extractTextFromPDF } = require('../src/services/pdfService')
+
+    extractTextFromPDF.mockResolvedValueOnce(
+      `Factura nº ${Date.now()} — importe total 120 €`
+    )
+
+    const notACVError = new Error('El PDF no parece un currículum.')
+    notACVError.name = 'NotACVError'
+
+    mockAnalyzeCV.mockRejectedValueOnce(notACVError)
+
+    const response = await session.agent
+      .post('/api/cv')
+      .attach('cv', Buffer.from('%PDF-1.4 factura'), {
+        filename: 'factura.pdf',
+        contentType: 'application/pdf'
+      })
+
+    expect(response.statusCode).toBe(422)
+    expect(response.body.message).toBe('El PDF no parece un currículum.')
+  })
+
+  /* =======================================================
      ARCHIVO NO PDF
      ======================================================= */
 
