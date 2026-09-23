@@ -87,7 +87,11 @@ const sectorProfiles = [
       region: 'Cataluña',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Desarrolladora Backend', sector: 'Tecnología', relevance: 'primary' }
+        {
+          occupation: 'Desarrolladora Backend',
+          sector: 'Tecnología',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Node.js', 'PostgreSQL'],
       certifications: [],
@@ -107,7 +111,11 @@ const sectorProfiles = [
       region: 'Andalucía',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Enfermero de UCI', sector: 'Sanidad', relevance: 'primary' }
+        {
+          occupation: 'Enfermero de UCI',
+          sector: 'Sanidad',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Cuidados críticos', 'RCP avanzada'],
       certifications: ['Soporte vital avanzado'],
@@ -127,7 +135,11 @@ const sectorProfiles = [
       region: 'Islas Baleares',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Camarero de sala', sector: 'Hostelería', relevance: 'primary' }
+        {
+          occupation: 'Camarero de sala',
+          sector: 'Hostelería',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Atención al cliente', 'Coctelería'],
       certifications: ['Manipulador de alimentos'],
@@ -147,7 +159,11 @@ const sectorProfiles = [
       region: 'Aragón',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Auxiliar administrativo', sector: 'Administración', relevance: 'primary' }
+        {
+          occupation: 'Auxiliar administrativo',
+          sector: 'Administración',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Ofimática', 'Atención telefónica'],
       certifications: [],
@@ -167,7 +183,11 @@ const sectorProfiles = [
       region: 'Castilla-La Mancha',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Mozo/a de almacén', sector: 'Logística', relevance: 'primary' }
+        {
+          occupation: 'Mozo/a de almacén',
+          sector: 'Logística',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Carretilla elevadora', 'Gestión de inventario'],
       certifications: ['Carnet de carretillero'],
@@ -187,7 +207,11 @@ const sectorProfiles = [
       region: 'Galicia',
       profileType: 'single',
       detectedProfiles: [
-        { occupation: 'Operario/a de producción industrial', sector: 'Industria', relevance: 'primary' }
+        {
+          occupation: 'Operario/a de producción industrial',
+          sector: 'Industria',
+          relevance: 'primary'
+        }
       ],
       keySkills: ['Manejo de maquinaria', 'Control de calidad'],
       certifications: ['PRL 20h'],
@@ -236,8 +260,16 @@ describe('Detección de perfil profesional por sector', () => {
       region: 'Comunidad de Madrid',
       profileType: 'hybrid',
       detectedProfiles: [
-        { occupation: 'Especialista en Marketing y análisis de datos', sector: 'Marketing', relevance: 'primary' },
-        { occupation: 'Analista de datos', sector: 'Tecnología', relevance: 'secondary' }
+        {
+          occupation: 'Especialista en Marketing y análisis de datos',
+          sector: 'Marketing',
+          relevance: 'primary'
+        },
+        {
+          occupation: 'Analista de datos',
+          sector: 'Tecnología',
+          relevance: 'secondary'
+        }
       ],
       keySkills: ['SQL', 'Google Analytics', 'Campañas digitales'],
       certifications: [],
@@ -257,13 +289,19 @@ describe('Detección de perfil profesional por sector', () => {
     expect(response.body.analysis.professionalProfile.profileType).toBe(
       'hybrid'
     )
-    expect(response.body.analysis.professionalProfile.detectedProfiles).toHaveLength(2)
+    expect(
+      response.body.analysis.professionalProfile.detectedProfiles
+    ).toHaveLength(2)
   })
 
   test('debe soportar un perfil multi (3+ profesiones) sin forzarlo a hybrid', async () => {
     const multiProfile = {
-      occupation: 'Formador/a y coordinador/a de eventos con soporte técnico audiovisual',
-      relatedOccupations: ['Técnico de sonido', 'Gestor de proyectos culturales'],
+      occupation:
+        'Formador/a y coordinador/a de eventos con soporte técnico audiovisual',
+      relatedOccupations: [
+        'Técnico de sonido',
+        'Gestor de proyectos culturales'
+      ],
       sector: 'Educación',
       subsector: 'Formación de adultos',
       seniority: 'Mid-level',
@@ -272,11 +310,27 @@ describe('Detección de perfil profesional por sector', () => {
       region: 'Comunidad Valenciana',
       profileType: 'multi',
       detectedProfiles: [
-        { occupation: 'Formador/a de adultos', sector: 'Educación', relevance: 'primary' },
-        { occupation: 'Coordinador/a de eventos', sector: 'Eventos', relevance: 'secondary' },
-        { occupation: 'Técnico de sonido', sector: 'Audiovisual', relevance: 'secondary' }
+        {
+          occupation: 'Formador/a de adultos',
+          sector: 'Educación',
+          relevance: 'primary'
+        },
+        {
+          occupation: 'Coordinador/a de eventos',
+          sector: 'Eventos',
+          relevance: 'secondary'
+        },
+        {
+          occupation: 'Técnico de sonido',
+          sector: 'Audiovisual',
+          relevance: 'secondary'
+        }
       ],
-      keySkills: ['Diseño instruccional', 'Gestión de proveedores', 'Mezcla de sonido en directo'],
+      keySkills: [
+        'Diseño instruccional',
+        'Gestión de proveedores',
+        'Mezcla de sonido en directo'
+      ],
       certifications: [],
       languages: []
     }
@@ -292,7 +346,9 @@ describe('Detección de perfil profesional por sector', () => {
 
     expect(response.statusCode).toBe(201)
     expect(response.body.analysis.professionalProfile.profileType).toBe('multi')
-    expect(response.body.analysis.professionalProfile.detectedProfiles).toHaveLength(3)
+    expect(
+      response.body.analysis.professionalProfile.detectedProfiles
+    ).toHaveLength(3)
     expect(
       response.body.analysis.professionalProfile.detectedProfiles.filter(
         p => p.relevance === 'primary'
@@ -311,9 +367,7 @@ describe('Detección de perfil profesional por sector', () => {
       location: '',
       region: '',
       profileType: 'single',
-      detectedProfiles: [
-        { occupation: '', sector: '', relevance: 'primary' }
-      ],
+      detectedProfiles: [{ occupation: '', sector: '', relevance: 'primary' }],
       keySkills: [],
       certifications: [],
       languages: []

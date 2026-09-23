@@ -125,19 +125,29 @@ function rebuildCVText(analysis) {
       lines.push(project.name || '')
       if (project.description) lines.push(project.description)
 
-      if (Array.isArray(project.technologies) && project.technologies.length > 0) {
-        lines.push(`Tecnologías/herramientas: ${project.technologies.join(', ')}`)
+      if (
+        Array.isArray(project.technologies) &&
+        project.technologies.length > 0
+      ) {
+        lines.push(
+          `Tecnologías/herramientas: ${project.technologies.join(', ')}`
+        )
       }
 
       lines.push('')
     }
   }
 
-  if (Array.isArray(analysis.certifications) && analysis.certifications.length > 0) {
+  if (
+    Array.isArray(analysis.certifications) &&
+    analysis.certifications.length > 0
+  ) {
     lines.push('CERTIFICACIONES Y CURSOS')
 
     for (const cert of analysis.certifications) {
-      const header = [cert.name, cert.platform, cert.date].filter(Boolean).join(' - ')
+      const header = [cert.name, cert.platform, cert.date]
+        .filter(Boolean)
+        .join(' - ')
       lines.push(header)
       if (cert.description) lines.push(cert.description)
     }
@@ -204,7 +214,9 @@ async function reanalyzeAll() {
       signal => !oldSignals.includes(signal)
     )
 
-    console.log(`\n=== CV id=${row.id}: ${row.candidate_name || 'sin nombre'} ===`)
+    console.log(
+      `\n=== CV id=${row.id}: ${row.candidate_name || 'sin nombre'} ===`
+    )
     console.log(
       `Profesión: ${row.profile || 'N/D'} → ${newAnalysis.overallAssessment.profile}`
     )
@@ -216,7 +228,9 @@ async function reanalyzeAll() {
     )
   }
 
-  console.log(`\nTotal de CVs reanalizados: ${rows.length} de ${CV_IDS.length} solicitados.`)
+  console.log(
+    `\nTotal de CVs reanalizados: ${rows.length} de ${CV_IDS.length} solicitados.`
+  )
 }
 
 reanalyzeAll()
