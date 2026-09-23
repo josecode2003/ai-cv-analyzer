@@ -2,12 +2,15 @@ const express = require('express')
 const { rateLimit } = require('express-rate-limit')
 
 const {
-  analyzeMarketForProfile,
+  getGeneralMarketSummary,
+  analyzeProfessionDemand,
   MARKET_ANALYSIS_VERSION,
   MARKET_DATA_VERSION
 } = require('../services/marketAnalysisService')
 
-const { createProfileSignature } = require('../services/hashService')
+const { createHash } = require('../services/hashService')
+
+const { toOccupationKey, SECTORS } = require('../services/rubricService')
 
 const { getAnalysisById } = require('../repositories/cvAnalysisRepository')
 
@@ -17,6 +20,12 @@ const {
 } = require('../repositories/marketAnalysisRepository')
 
 const router = express.Router()
+
+/*
+ * La demanda de una profesión no cambia de un día para otro: la nota
+ * se reutiliza durante un mes para cualquier CV de esa profesión.
+ */
+const PROFESSION_NOTE_MAX_AGE_DAYS = 30
 
 /* =========================================================
    RATE LIMITING
@@ -36,6 +45,66 @@ const marketAnalysisLimiter =
             'Has alcanzado el límite de análisis de mercado. Inténtalo más tarde.'
         }
       })
+
+/*
+ * Los análisis anteriores al baremo solo tienen la ocupación en texto
+ * libre (escrita por el modelo tras leer el CV). La nota de mercado se
+ * comparte entre usuarios, así que solo se genera para ocupaciones con
+ * forma de nombre de profesión.
+ */
+const MAX_OCCUPATION_CHARS = 60
+
+/*
+ * Varias peticiones simultáneas para la misma profesión comparten una
+ * única búsqueda web.
+ */
+const inFlightNotes = new Map()
+
+/**
+ * @param {number} cvAnalysisId
+ * @param {{ occupation: string, sector?: string }} profile
+ */
+async function getProfessionNote(cvAnalysisId, profile) {
+  const profileSignature = createHash(
+    `profession-demand|${toOccupationKey(profile.occupation)}`
+  )
+
+  const cached = await findByProfileSignature(
+    profileSignature,
+    MARKET_ANALYSIS_VERSION,
+    MARKET_DATA_VERSION,
+    PROFESSION_NOTE_MAX_AGE_DAYS
+  )
+
+  if (cached) {
+    return cached.result
+  }
+
+  if (!inFlightNotes.has(profileSignature)) {
+    const pending = analyzeProfessionDemand(profile)
+      .then(async result => {
+        await createMarketAnalysis({
+          cvAnalysisId,
+          profileSignature,
+          occupation: profile.occupation,
+          sector: profile.sector,
+          region: '',
+          modelVersion: MARKET_ANALYSIS_VERSION,
+          dataVersion: MARKET_DATA_VERSION,
+          status:
+            result.demandLevel === 'sin_datos' ? 'insufficient_data' : 'ready',
+          result
+        })
+
+        return result
+      })
+      .finally(() => inFlightNotes.delete(profileSignature))
+
+    inFlightNotes.set(profileSignature, pending)
+  }
+
+  return inFlightNotes.get(profileSignature)
+}
 
 /* =========================================================
    ANALIZAR MERCADO LABORAL PARA UN CV
@@ -62,88 +131,65 @@ router.post('/:id/market-analysis', marketAnalysisLimiter, async (req, res) => {
       })
     }
 
-    const profile = cvAnalysis.analysis?.professionalProfile
+    /*
+     * La profesión evaluada por el baremo (evaluation.occupation) es el
+     * nombre canónico; los análisis anteriores solo tienen el perfil.
+     */
+    const analysis = cvAnalysis.analysis || {}
+
+    const candidateOccupation = String(
+      analysis.evaluation?.occupation ||
+        analysis.professionalProfile?.occupation ||
+        ''
+    ).trim()
+
+    const occupation =
+      candidateOccupation.length <= MAX_OCCUPATION_CHARS &&
+      toOccupationKey(candidateOccupation)
+        ? candidateOccupation
+        : ''
+
+    const candidateSector =
+      analysis.evaluation?.sector || analysis.professionalProfile?.sector || ''
+
+    const sector = SECTORS.includes(candidateSector) ? candidateSector : ''
 
     /*
-     * El CV Analysis y el Market Analysis son procesos
-     * desacoplados (ver README): este endpoint nunca
-     * reprocesa el CV, solo lee el perfil ya extraído.
-     *
-     * Un análisis antiguo, generado antes de que existiera
-     * `professionalProfile`, no tiene perfil que consultar.
+     * Una fuente externa caída no debe romper la petición: cada parte
+     * se resuelve por separado y la que falle simplemente no se
+     * muestra, en vez de rellenar el hueco con algo inventado.
      */
+    const [general, profession] = await Promise.all([
+      getGeneralMarketSummary().catch(error => {
+        console.error('Error obteniendo el resumen general del mercado:', error)
+        return null
+      }),
+      occupation
+        ? getProfessionNote(id, { occupation, sector }).catch(error => {
+            console.error('Error obteniendo la demanda de la profesión:', error)
+            return null
+          })
+        : Promise.resolve(null)
+    ])
 
-    if (!profile || !profile.occupation) {
+    if (!general && !profession) {
       return res.status(200).json({
         status: 'success',
         available: false,
         message:
-          'No se pudo determinar un perfil profesional para este CV, así que no es posible analizar el mercado laboral asociado.'
+          'No se pudo obtener la información del mercado laboral en este momento. Inténtalo de nuevo más tarde.'
       })
     }
 
-    const profileSignature = createProfileSignature(profile)
-
-    const cached = await findByProfileSignature(
-      profileSignature,
-      MARKET_ANALYSIS_VERSION,
-      MARKET_DATA_VERSION
-    )
-
-    if (cached) {
-      return res.status(200).json({
-        status: 'success',
-        available: true,
-        cached: true,
-        marketAnalysis: cached.result,
-        generatedAt: cached.created_at
-      })
-    }
-
-    let result
-
-    try {
-      result = await analyzeMarketForProfile(profile)
-    } catch (marketError) {
-      /*
-       * Una fuente externa caída no debe romper el análisis
-       * del CV, que ya se generó y guardó correctamente antes.
-       * Informamos explícitamente de que este indicador no
-       * está disponible, en vez de fallar con un 500 o, peor,
-       * rellenar el hueco con una respuesta inventada.
-       */
-
-      console.error('Error obteniendo el análisis de mercado:', marketError)
-
-      return res.status(200).json({
-        status: 'success',
-        available: false,
-        message:
-          'No se pudo obtener el análisis de mercado laboral en este momento. Inténtalo de nuevo más tarde.'
-      })
-    }
-
-    const saved = await createMarketAnalysis({
-      cvAnalysisId: id,
-      profileSignature,
-      occupation: profile.occupation,
-      sector: profile.sector,
-      region: profile.region || profile.location,
-      modelVersion: MARKET_ANALYSIS_VERSION,
-      dataVersion: MARKET_DATA_VERSION,
-      status:
-        result.dataSufficiency === 'insufficient'
-          ? 'insufficient_data'
-          : 'ready',
-      result
-    })
-
-    return res.status(201).json({
+    return res.status(200).json({
       status: 'success',
       available: true,
-      cached: false,
-      marketAnalysis: result,
-      generatedAt: saved.created_at
+      generatedAt: new Date().toISOString(),
+      marketAnalysis: {
+        version: 2,
+        general,
+        profession
+      }
     })
   } catch (error) {
     console.error('Error procesando el análisis de mercado:', error)
